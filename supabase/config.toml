@@ -1,0 +1,19 @@
+project_id = "dcmltuyyrmodaqhuudyd"
+
+[functions.ingest-gmail]
+verify_jwt = false
+
+[functions.ingest-clickup]
+verify_jwt = false
+
+[functions.ingest-gcal]
+verify_jwt = false
+
+[functions.evaluate-rules]
+verify_jwt = false
+
+[functions.slack-notify]
+verify_jwt = false
+
+[functions.slack-interactions]
+verify_jwt = false

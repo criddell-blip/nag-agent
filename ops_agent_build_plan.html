@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UBB Ops Agent — Build Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f5f1ea;
+  --bg-alt: #ede7dc;
+  --paper: #fdfaf3;
+  --ink: #1a2332;
+  --ink-soft: #4a5468;
+  --ink-faint: #8b94a3;
+  --rust: #c45b2e;
+  --rust-soft: #e09678;
+  --moss: #5a7340;
+  --line: #d4cdbe;
+  --line-soft: #e5dfd1;
+  --grid: rgba(26, 35, 50, 0.04);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Inter', sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  line-height: 1.5;
+  min-height: 100vh;
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: -1px -1px;
+}
+
+.page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 32px 20px 80px;
+}
+
+/* HEADER */
+.masthead {
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 18px;
+  margin-bottom: 28px;
+  position: relative;
+}
+
+.masthead::before {
+  content: "";
+  position: absolute;
+  bottom: -6px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--ink);
+}
+
+.doc-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 14px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.doc-id { color: var(--rust); font-weight: 600; }
+
+.title {
+  font-family: 'Fraunces', serif;
+  font-size: clamp(32px, 7vw, 48px);
+  font-weight: 500;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  margin-bottom: 8px;
+}
+
+.title em {
+  font-style: italic;
+  color: var(--rust);
+  font-weight: 400;
+}
+
+.subtitle {
+  font-size: 15px;
+  color: var(--ink-soft);
+  max-width: 520px;
+  line-height: 1.5;
+}
+
+/* STATS BAR */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--line);
+  margin: 24px 0;
+  border: 1px solid var(--line);
+}
+
+.stat {
+  background: var(--paper);
+  padding: 14px 12px;
+  text-align: left;
+}
+
+.stat-val {
+  font-family: 'Fraunces', serif;
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--ink);
+}
+
+.stat-lbl {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-top: 4px;
+}
+
+/* SECTIONS */
+.section {
+  margin-top: 36px;
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.section-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--rust);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.section-title {
+  font-family: 'Fraunces', serif;
+  font-size: 22px;
+  font-weight: 500;
+  flex: 1;
+}
+
+.section-sub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-faint);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* PHASE CARDS */
+.phase {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  margin-bottom: 8px;
+  transition: all 0.15s ease;
+}
+
+.phase:hover { border-color: var(--ink-faint); }
+.phase.open { border-color: var(--ink); box-shadow: 4px 4px 0 var(--bg-alt); }
+.phase.done { opacity: 0.55; }
+
+.phase-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.phase-check {
+  width: 22px;
+  height: 22px;
+  border: 1.5px solid var(--ink-soft);
+  border-radius: 2px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.phase-check:hover { border-color: var(--ink); }
+.phase.done .phase-check { background: var(--moss); border-color: var(--moss); }
+.phase.done .phase-check::after {
+  content: "✓";
+  color: var(--paper);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.phase-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--rust);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
+.phase-text { flex: 1; min-width: 0; }
+
+.phase-name {
+  font-family: 'Fraunces', serif;
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--ink);
+}
+
+.phase.done .phase-name { text-decoration: line-through; text-decoration-thickness: 1px; }
+
+.phase-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-top: 3px;
+}
+
+.phase-chev {
+  color: var(--ink-faint);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.phase.open .phase-chev { transform: rotate(90deg); color: var(--ink); }
+
+.phase-body {
+  display: none;
+  padding: 0 16px 18px;
+  border-top: 1px dashed var(--line);
+  margin-top: -1px;
+}
+
+.phase.open .phase-body { display: block; }
+
+.phase-scope {
+  font-size: 14px;
+  color: var(--ink-soft);
+  line-height: 1.6;
+  margin: 14px 0 16px;
+  font-style: italic;
+  font-family: 'Fraunces', serif;
+}
+
+.deliverables {
+  margin: 14px 0;
+}
+
+.deliverables-h {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--rust);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.deliverables ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+.deliverables li {
+  font-size: 14px;
+  color: var(--ink);
+  padding: 4px 0 4px 18px;
+  position: relative;
+  line-height: 1.5;
+}
+
+.deliverables li::before {
+  content: "→";
+  position: absolute;
+  left: 0;
+  color: var(--rust);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.dod {
+  background: var(--bg-alt);
+  padding: 10px 12px;
+  margin-top: 14px;
+  border-left: 3px solid var(--moss);
+  font-size: 13px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.dod strong {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--moss);
+  font-weight: 600;
+  display: block;
+  margin-bottom: 4px;
+}
+
+/* TECH STACK */
+.stack {
+  display: grid;
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+
+.stack-row {
+  background: var(--paper);
+  padding: 12px 16px;
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.stack-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--rust);
+  font-weight: 600;
+  min-width: 90px;
+  flex-shrink: 0;
+}
+
+.stack-val {
+  font-size: 14px;
+  color: var(--ink);
+  flex: 1;
+  line-height: 1.5;
+}
+
+/* RULES */
+.rule {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  padding: 12px 14px;
+  margin-bottom: 6px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.rule:hover { border-color: var(--ink-faint); }
+.rule.checked { background: var(--bg-alt); }
+
+.rule-check {
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--ink-faint);
+  border-radius: 2px;
+  flex-shrink: 0;
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rule.checked .rule-check { background: var(--ink); border-color: var(--ink); }
+.rule.checked .rule-check::after { content: "✓"; color: var(--paper); font-size: 10px; }
+
+.rule-text { flex: 1; font-size: 13px; line-height: 1.5; color: var(--ink); }
+.rule-text code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  background: var(--bg-alt);
+  padding: 1px 5px;
+  border-radius: 2px;
+  color: var(--rust);
+}
+
+/* DECISIONS */
+.decision {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  padding: 14px 16px;
+  margin-bottom: 8px;
+}
+
+.dec-q {
+  font-family: 'Fraunces', serif;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--ink);
+  margin-bottom: 8px;
+  line-height: 1.3;
+}
+
+.dec-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.dec-opt {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  padding: 4px 10px;
+  background: var(--bg-alt);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  cursor: pointer;
+  color: var(--ink-soft);
+  transition: all 0.15s;
+}
+
+.dec-opt:hover { border-color: var(--ink-soft); color: var(--ink); }
+.dec-opt.picked { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+.dec-note {
+  font-size: 13px;
+  color: var(--ink-soft);
+  font-style: italic;
+  font-family: 'Fraunces', serif;
+  line-height: 1.5;
+  margin-top: 6px;
+}
+
+/* FOOTER */
+.footer {
+  margin-top: 48px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.reset-btn {
+  background: transparent;
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.reset-btn:hover { border-color: var(--rust); color: var(--rust); }
+
+@media (max-width: 520px) {
+  .page { padding: 20px 16px 60px; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .stack-row { flex-direction: column; gap: 4px; }
+  .stack-label { min-width: 0; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="masthead">
+  <div class="doc-meta">
+    <span><span class="doc-id">DOC.001</span> · UTAH BROADBAND</span>
+    <span id="date-stamp"></span>
+  </div>
+  <h1 class="title">The Ops Agent · <em>Build Plan</em></h1>
+  <p class="subtitle">A nagging assistant + visual dashboard that watches your email, ClickUp, and calendar — and tells you what you're forgetting before it bites you.</p>
+</header>
+
+<div class="stats">
+  <div class="stat"><div class="stat-val">6</div><div class="stat-lbl">Phases</div></div>
+  <div class="stat"><div class="stat-val">~10</div><div class="stat-lbl">Weeks to MVP</div></div>
+  <div class="stat"><div class="stat-val">10</div><div class="stat-lbl">Starter rules</div></div>
+  <div class="stat"><div class="stat-val">5</div><div class="stat-lbl">Open decisions</div></div>
+</div>
+
+<!-- PHASES -->
+<section class="section">
+  <div class="section-head">
+    <span class="section-num">§ 01</span>
+    <h2 class="section-title">Build phases</h2>
+    <span class="section-sub">Tap to expand</span>
+  </div>
+
+  <div id="phases"></div>
+</section>
+
+<!-- TECH STACK -->
+<section class="section">
+  <div class="section-head">
+    <span class="section-num">§ 02</span>
+    <h2 class="section-title">Tech stack</h2>
+    <span class="section-sub">Same family as FiberLog</span>
+  </div>
+
+  <div class="stack">
+    <div class="stack-row"><div class="stack-label">Frontend</div><div class="stack-val">React 18 + Vite, deployed to GitHub Pages (same pattern as FiberLog). Shadcn-style components.</div></div>
+    <div class="stack-row"><div class="stack-label">Backend</div><div class="stack-val">Supabase — Postgres for state, Edge Functions for ingest + rule engine, Realtime for dashboard, Scheduled Functions for cron.</div></div>
+    <div class="stack-row"><div class="stack-label">Nag layer</div><div class="stack-val">Slack Bolt for Node.js, hosted as a Supabase Edge Function. DMs for personal nags, channel for team-visible items.</div></div>
+    <div class="stack-row"><div class="stack-label">Sources</div><div class="stack-val">Gmail API · ClickUp API v2 · Google Calendar API. OAuth refresh tokens stored in Supabase Vault.</div></div>
+    <div class="stack-row"><div class="stack-label">Classifier</div><div class="stack-val">Hybrid — keyword/regex rules for cheap signals, Claude API call for ambiguous emails (e.g. "is this actually urgent or boilerplate?").</div></div>
+    <div class="stack-row"><div class="stack-label">Auth</div><div class="stack-val">Supabase Auth, single-user to start. Multi-user later if team members want their own nag streams.</div></div>
+  </div>
+</section>
+
+<!-- INITIAL RULES -->
+<section class="section">
+  <div class="section-head">
+    <span class="section-num">§ 03</span>
+    <h2 class="section-title">Starter rule set</h2>
+    <span class="section-sub">Tap to mark for v1</span>
+  </div>
+
+  <div id="rules"></div>
+</section>
+
+<!-- DECISIONS -->
+<section class="section">
+  <div class="section-head">
+    <span class="section-num">§ 04</span>
+    <h2 class="section-title">Open decisions</h2>
+    <span class="section-sub">Pick before Phase 1</span>
+  </div>
+
+  <div id="decisions"></div>
+</section>
+
+<footer class="footer">
+  <span>End of plan · v1.0</span>
+  <button class="reset-btn" id="reset">Reset state</button>
+</footer>
+
+</div>
+
+<script>
+// ====== DATA ======
+const phases = [
+  {
+    id: 'p1',
+    num: 'PHASE 01',
+    name: 'Foundation & connections',
+    meta: 'Weeks 1–2 · Plumbing',
+    scope: 'Wire up the three data sources, get a unified schema in place, prove we can read everything cleanly.',
+    deliverables: [
+      'Supabase schema: alerts, rules, alert_dispositions, learned_patterns, integrations',
+      'OAuth flows for Gmail, ClickUp, Google Calendar (refresh tokens in Vault)',
+      'Edge Function ingest: fetch + normalize emails, tasks, events into a unified events table',
+      'First proof: SESD emails ingested, linked to ClickUp tasks where phase numbers match'
+    ],
+    dod: 'Can query Supabase and see the last 30 days of SESD email metadata, your open ClickUp tasks, and calendar events for the next 2 weeks in one normalized view.'
+  },
+  {
+    id: 'p2',
+    num: 'PHASE 02',
+    name: 'Rule engine',
+    meta: 'Weeks 3–4 · Brains',
+    scope: 'Define rules as JSON, run them against ingested events on a schedule, generate alerts with severity.',
+    deliverables: [
+      'Rule schema: conditions (source, sender, keyword, age, status) + actions (alert level, snooze policy)',
+      'Matcher Edge Function: runs every 15 min, evaluates open events against active rules',
+      'Alert generation with severity (info / warn / critical) and dedup so the same thing doesn\'t alert twice',
+      'CLI or admin page to add/edit/disable rules'
+    ],
+    dod: 'A new SESD invoice email triggers a critical alert in the alerts table within 15 minutes of arrival, with the right phase number attached.'
+  },
+  {
+    id: 'p3',
+    num: 'PHASE 03',
+    name: 'Slack nag layer',
+    meta: 'Weeks 5–6 · The voice',
+    scope: 'Alerts get delivered. You can respond inside Slack. The agent stops nagging once you handle it.',
+    deliverables: [
+      'Slack app + Bolt bot, OAuth installed, DM permissions',
+      'Alert formatter with rich blocks: title, context, links to email/task, action buttons',
+      'Interactive actions: Acknowledge · Snooze (1d/3d/1w) · Dismiss · Mark done · Open in app',
+      'Escalation logic: unacknowledged critical alerts re-ping every morning until dealt with'
+    ],
+    dod: 'A SESD invoice email lands → 15 min later a Slack DM hits with "review and route to accounting" + buttons → you snooze 1 day → it comes back tomorrow.'
+  },
+  {
+    id: 'p4',
+    num: 'PHASE 04',
+    name: 'Visual dashboard',
+    meta: 'Weeks 7–8 · The map',
+    scope: 'A React dashboard you open when you want the full landscape, not just the nags.',
+    deliverables: [
+      'Three-pane layout: calendar week-view (left), phase tracker (center), alert/email queue (right)',
+      'Live sync via Supabase Realtime — alerts and statuses update without refresh',
+      'Phase tracker reuses the SESD pattern we already built — auto-updated from email + ClickUp state',
+      'Mobile-responsive (this is half the value if you can pull it up in the truck)'
+    ],
+    dod: 'Open the dashboard on your phone, see "ReConnect meeting Wed → 3 related ClickUp tasks → 1 email from Melinda waiting" all visually connected.'
+  },
+  {
+    id: 'p5',
+    num: 'PHASE 05',
+    name: 'Learning loop',
+    meta: 'Weeks 9–10 · Smarter',
+    scope: 'Capture how you react to alerts, adjust rules over time, surface a monthly review.',
+    deliverables: [
+      'Every alert disposition logged: acted-on, dismissed, snoozed-N-times, marked false-positive',
+      'Weekly aggregation: which rules generate noise vs. signal, which senders you always ignore',
+      'Monthly rule review surface in dashboard — "you dismissed 8 alerts from conservation@sesdofutah.org, want to mute that sender?"',
+      'Explicit override controls — never silently change a rule without your sign-off'
+    ],
+    dod: 'After a month, the agent has proposed at least 3 rule adjustments and you\'ve approved or rejected each.'
+  },
+  {
+    id: 'p6',
+    num: 'PHASE 06',
+    name: 'Expand & polish',
+    meta: 'Ongoing',
+    scope: 'Roll the pattern out to more vendors, more projects, more signal types. Polish the rough edges.',
+    deliverables: [
+      'Vendor expansion: Power & Tel, Millennium, Non Typical Supply, Sonar support, Calix',
+      'Project context: Reconnect, BEAD, individual sites (West Mountain / Silver Summit / etc.)',
+      'Calendar smart-context: meeting → auto-surface related tasks and recent emails',
+      'Optional: mobile push notifications for critical-tier alerts (escalation past Slack)'
+    ],
+    dod: 'Agent is part of your daily workflow. The week starts with a digest and you trust what it surfaces.'
+  }
+];
+
+const rules = [
+  { id: 'r1', text: 'Email from <code>@sesdofutah.org</code> with "invoice" in subject → <strong>critical alert</strong>' },
+  { id: 'r2', text: 'Email from Ryan/Brook/Heather with attachment → <strong>flag for review</strong> within 24h' },
+  { id: 'r3', text: 'ClickUp task past due date → <strong>daily nag</strong> until handled or explicitly snoozed' },
+  { id: 'r4', text: 'ClickUp task due in <code>&lt;24h</code> with no recent activity → <strong>soft nag</strong>' },
+  { id: 'r5', text: 'Calendar event in <code>&lt;2h</code> with open ClickUp tasks tied to it → <strong>context push</strong>' },
+  { id: 'r6', text: 'Email from key sender unanswered for <code>3 days</code> → <strong>escalate to critical</strong>' },
+  { id: 'r7', text: 'New vendor quote email → <strong>cross-reference your procurement spreadsheet</strong>, flag deltas' },
+  { id: 'r8', text: 'Payment confirmation email from <code>conservation@sesdofutah.org</code> → <strong>auto-mark related task done</strong>' },
+  { id: 'r9', text: 'ClickUp status change to "blocked" → <strong>nag</strong> with last 3 emails on the topic for context' },
+  { id: 'r10', text: 'Pole attachment / make-ready phase referenced in new email → <strong>auto-update phase tracker</strong>' }
+];
+
+const decisions = [
+  {
+    id: 'd1',
+    q: 'Primary nag channel — where should the bot live?',
+    opts: ['Slack only', 'Slack + email digest', 'Slack + SMS for critical', 'Email digest only'],
+    note: 'Slack is most flexible for interactivity; SMS is the hardest to ignore for true emergencies (overdue invoices, missed permits).'
+  },
+  {
+    id: 'd2',
+    q: 'Where does the dashboard live?',
+    opts: ['Standalone app', 'Integrated into FiberLog', 'Both — same code, two routes'],
+    note: 'FiberLog is field-facing; this dashboard is ops-facing. They may want different UX even if they share a backend.'
+  },
+  {
+    id: 'd3',
+    q: 'Email classification — how smart does it need to be?',
+    opts: ['Keyword rules only', 'Hybrid (keywords + LLM)', 'LLM for everything'],
+    note: 'Hybrid is the right answer for cost. Keywords for 80% of signal (sender + subject regex), LLM for the ambiguous 20%.'
+  },
+  {
+    id: 'd4',
+    q: 'How aggressive should the learning be?',
+    opts: ['Suggest only — you approve every change', 'Auto-mute after 5 dismissals', 'Full auto-adjust with monthly audit'],
+    note: '"Suggest only" feels safest given your stated preference for explicit override.'
+  },
+  {
+    id: 'd5',
+    q: 'Who has access in v1?',
+    opts: ['Just you', 'You + Mike (read-only)', 'Full team'],
+    note: 'Starting solo means fewer permission edge cases. Multi-user can come after the patterns are proven.'
+  }
+];
+
+// ====== STATE (persistent) ======
+const STATE_KEY = 'ubb-ops-agent-build-plan-v1';
+const state = {
+  phaseDone: {},
+  phaseOpen: {},
+  rulesPicked: {},
+  decisions: {}
+};
+
+async function loadState() {
+  try {
+    if (window.storage) {
+      const r = await window.storage.get(STATE_KEY);
+      if (r && r.value) Object.assign(state, JSON.parse(r.value));
+    } else {
+      const raw = sessionStorage.getItem(STATE_KEY);
+      if (raw) Object.assign(state, JSON.parse(raw));
+    }
+  } catch (e) { /* first load or unavailable */ }
+}
+
+async function saveState() {
+  try {
+    if (window.storage) await window.storage.set(STATE_KEY, JSON.stringify(state));
+    else sessionStorage.setItem(STATE_KEY, JSON.stringify(state));
+  } catch (e) {}
+}
+
+// ====== RENDER ======
+function renderPhases() {
+  const c = document.getElementById('phases');
+  c.innerHTML = '';
+  phases.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'phase' + (state.phaseDone[p.id] ? ' done' : '') + (state.phaseOpen[p.id] ? ' open' : '');
+    div.innerHTML = `
+      <div class="phase-head">
+        <div class="phase-check" data-act="toggle-done"></div>
+        <div class="phase-num">${p.num}</div>
+        <div class="phase-text">
+          <div class="phase-name">${p.name}</div>
+          <div class="phase-meta">${p.meta}</div>
+        </div>
+        <div class="phase-chev">›</div>
+      </div>
+      <div class="phase-body">
+        <div class="phase-scope">${p.scope}</div>
+        <div class="deliverables">
+          <div class="deliverables-h">Deliverables</div>
+          <ul>${p.deliverables.map(d => `<li>${d}</li>`).join('')}</ul>
+        </div>
+        <div class="dod"><strong>Done when</strong>${p.dod}</div>
+      </div>
+    `;
+    const head = div.querySelector('.phase-head');
+    const check = div.querySelector('.phase-check');
+    head.addEventListener('click', (e) => {
+      if (e.target.closest('.phase-check')) return;
+      state.phaseOpen[p.id] = !state.phaseOpen[p.id];
+      saveState(); renderPhases();
+    });
+    check.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.phaseDone[p.id] = !state.phaseDone[p.id];
+      saveState(); renderPhases();
+    });
+    c.appendChild(div);
+  });
+}
+
+function renderRules() {
+  const c = document.getElementById('rules');
+  c.innerHTML = '';
+  rules.forEach(r => {
+    const div = document.createElement('div');
+    div.className = 'rule' + (state.rulesPicked[r.id] ? ' checked' : '');
+    div.innerHTML = `
+      <div class="rule-check"></div>
+      <div class="rule-text">${r.text}</div>
+    `;
+    div.addEventListener('click', () => {
+      state.rulesPicked[r.id] = !state.rulesPicked[r.id];
+      saveState(); renderRules();
+    });
+    c.appendChild(div);
+  });
+}
+
+function renderDecisions() {
+  const c = document.getElementById('decisions');
+  c.innerHTML = '';
+  decisions.forEach(d => {
+    const picked = state.decisions[d.id];
+    const div = document.createElement('div');
+    div.className = 'decision';
+    div.innerHTML = `
+      <div class="dec-q">${d.q}</div>
+      <div class="dec-opts">
+        ${d.opts.map(o => `<div class="dec-opt${picked === o ? ' picked' : ''}" data-opt="${o.replace(/"/g, '&quot;')}">${o}</div>`).join('')}
+      </div>
+      <div class="dec-note">${d.note}</div>
+    `;
+    div.querySelectorAll('.dec-opt').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const v = btn.dataset.opt;
+        state.decisions[d.id] = state.decisions[d.id] === v ? null : v;
+        saveState(); renderDecisions();
+      });
+    });
+    c.appendChild(div);
+  });
+}
+
+function renderDate() {
+  const d = new Date();
+  const m = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
+  document.getElementById('date-stamp').textContent = `${String(d.getDate()).padStart(2,'0')} ${m} ${d.getFullYear()}`;
+}
+
+document.getElementById('reset').addEventListener('click', async () => {
+  if (!confirm('Reset all progress on this plan?')) return;
+  state.phaseDone = {}; state.phaseOpen = {}; state.rulesPicked = {}; state.decisions = {};
+  await saveState();
+  renderPhases(); renderRules(); renderDecisions();
+});
+
+(async () => {
+  await loadState();
+  renderDate();
+  renderPhases();
+  renderRules();
+  renderDecisions();
+})();
+</script>
+</body>
+</html>
