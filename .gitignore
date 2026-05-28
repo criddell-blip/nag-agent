@@ -8,3 +8,8 @@ dist
 .DS_Store
 .idea
 .vscode
+
+# data exports / spreadsheets — may contain sensitive contacts/threads
+*.xlsx
+*.xls
+*.csv

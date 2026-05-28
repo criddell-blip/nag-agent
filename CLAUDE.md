@@ -24,6 +24,8 @@ The agent's job is to be **actively annoying in the right places**: nag about ov
 - Learning loop with explicit override — never silently change behavior, always surface "want me to mute X?" for approval.
 - **Keyword/regex classification only for v1** — every starter rule is solvable with sender allowlists, subject regex, status checks, and date math. No LLM dependency. May add Claude API later if specific rules prove too brittle to express as regex.
 - Start narrow (SESD + ClickUp), expand once patterns are proven.
+- **Loud by default** — critical alerts re-nag hourly (gated by 22:00–06:00 MT quiet hours). Tune down if it's too much; opposite is the harder direction.
+- **People-table-driven matching** — rules reference `people.priority_tier` / `role_category` / `org` instead of hardcoded names, so updating who matters is a row edit, not a rule rewrite.
 
 ---
 
@@ -177,7 +179,59 @@ create table learned_patterns (
   status text default 'pending' check (status in ('pending', 'accepted', 'rejected')),
   surfaced_at timestamptz default now()
 );
+
+-- People the rule engine cares about (added in migration 0003)
+-- Each row = one email address. Same human at multiple addresses = multiple rows.
+create table people (
+  id uuid primary key default gen_random_uuid(),
+  email text not null unique,
+  name text,
+  org text,
+  role text,
+  role_category text not null check (role_category in (
+    'internal','vendor','utility','partner_isp','government','contractor',
+    'engineering','legal','automated','sales','family','applicant','customer','other'
+  )),
+  priority_tier text not null default 'normal' check (priority_tier in (
+    'critical','high','normal','low','noise'
+  )),
+  notes text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
 ```
+
+**Rule condition shape (the JSON the matcher will interpret):**
+
+| Field | Meaning |
+|---|---|
+| `source` | `'gmail'` / `'clickup'` / `'gcal'` |
+| `sender_priority_in` | array of `people.priority_tier` values (e.g. `["critical","high"]`) |
+| `sender_role_in` | array of `people.role_category` values |
+| `sender_role_not_in` | exclude these role categories (e.g. exclude `internal` from external escalation rules) |
+| `sender_org_in` | array of `people.org` names |
+| `sender_in` | array of specific emails (overrides people-table lookup) |
+| `sender_regex` | POSIX regex against `events.sender` (for ad-hoc patterns) |
+| `subject_regex` | POSIX regex against `events.subject` |
+| `body_regex` | POSIX regex against `events.body_excerpt` |
+| `has_attachments` | bool (Gmail only) |
+| `age_min_hours` / `age_max_hours` | event age window |
+| `due_within_hours` / `past_due` | task / calendar event due-date checks |
+| `status_in` | array of event statuses |
+| `status_change_to` | event status flipped to this value |
+| `exclude_noise_senders` | bool — auto-skip `people.priority_tier='noise'` |
+
+**Rule action shape:**
+
+| Field | Meaning |
+|---|---|
+| `severity` | `'info'` / `'warn'` / `'critical'` |
+| `title_template` | human-readable title; `{subject}` / `{sender}` substituted |
+| `re_nag` | `'hourly'` (critical only, during business hours) / `'daily'` (morning) / `'none'` |
+| `escalate_after` | bump severity to critical after N days unhandled |
+| `auto_close_event` | bool (e.g. payment confirmation auto-marks related task done) |
+
+**Quiet hours:** globally 22:00–06:00 MT, enforced by the matcher regardless of `re_nag` setting. Critical alerts that fire overnight batch into a 06:00 wake-up DM.
 
 ---
 
@@ -225,20 +279,37 @@ See `ops_agent_build_plan.html` for the full interactive plan with deliverables 
 
 ---
 
-## Starter rules (v1 seed)
+## Active rules (15)
 
-These should be in a `seed_rules.sql` and applied after the first migration:
+Seeded by migration `0004_rules_v2`. The full SQL with conditions is in [supabase/migrations/](./supabase/migrations/). All rules are keyword/regex + people-table lookups — no LLM.
 
-1. SESD email with "invoice" in subject → critical alert
-2. Email from Ryan/Brook/Heather with attachment → flag for review within 24h
-3. ClickUp task past due → daily nag until handled
-4. ClickUp task due <24h with no recent activity → soft nag
-5. Calendar event in <2h with open ClickUp tasks tied to it → context push
-6. Email from key sender unanswered for 3 days → escalate to critical
-7. New vendor quote email → cross-reference procurement spreadsheet
-8. Payment confirmation from `conservation@sesdofutah.org` → auto-mark related task done
-9. ClickUp status change to "blocked" → nag with related email context
-10. Phase number referenced in new email → update phase tracker
+1. **SESD invoice email** → critical, hourly re-nag
+2. **High-priority sender with attachment** → warn, daily (anyone `critical`/`high` in people table)
+3. **ClickUp task past due** → warn, daily
+4. **ClickUp task due <24h, no recent activity** → info, no re-nag
+5. **Meeting in <2h with related ClickUp tasks** → info, no re-nag
+6. **External vendor/utility unanswered 3 days** → critical, hourly (excludes internal staff/family/automated)
+7. **Internal UBB unanswered 5 days** → warn, daily (gentler than rule 6 for own team)
+8. **New vendor quote** → info, no re-nag (subject mentions quote/estimate/proposal/RFQ + sender is a vendor)
+9. **SESD payment confirmation** → info, auto-closes related event
+10. **ClickUp status changed to blocked** → warn, daily
+11. **Phase number referenced in new email** → info, no re-nag
+12. **Anything from Melinda (Reconnect lead)** → critical, hourly — covers both her UBB + AireBeam addresses
+13. **Anything from Michelle Filleman** → warn, daily
+14. **Anything from R&S Drilling** → warn, daily
+15. **Project keyword in subject** → info, no re-nag (Reconnect / BEAD / West Mountain)
+
+## Migrations
+
+| File | What |
+|---|---|
+| `20260528155555_0001_initial_schema.sql` | 6 tables + RLS + `set_updated_at` helper |
+| `20260528155624_0002_seed_rules.sql` | Original 10 starter rules (superseded by 0004) |
+| `20260528184446_0003_people_table_and_seed.sql` | `people` table + `find_person()` + ~100 contacts |
+| `20260528184534_0004_rules_v2.sql` | Replaced rules with people-table-aware conditions + 4 new |
+| `20260528184615_0005_find_person_invoker.sql` | Switched `find_person` to SECURITY INVOKER (advisor fix) |
+
+Applied via Supabase MCP. Re-runnable with `npx supabase db reset` if you ever spin up a clean project from this repo.
 
 ---
 
