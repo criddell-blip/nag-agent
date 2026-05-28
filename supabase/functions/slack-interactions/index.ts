@@ -1,19 +1,199 @@
-// slack-interactions · receives Slack button clicks (POST from Slack to this URL).
-// Updates alert status + logs disposition.
+// ════════════════════════════════════════════════════════════════════
+// slack-interactions · receives button clicks from Slack.
 //
-// TODO Phase 3:
-//   - Verify Slack signing secret (X-Slack-Signature header)
-//   - Parse payload (form-urlencoded with 'payload' field containing JSON)
-//   - Switch on action_id: ack | snooze_1d | snooze_3d | snooze_1w | dismiss | mark_done
-//   - UPDATE alerts SET status=..., snooze_until=..., closed_at=...
-//   - INSERT INTO alert_dispositions for the audit trail
-//   - Respond with response_action to update the original Slack message
+// Slack POSTs form-urlencoded `payload=...` (JSON) when the user clicks
+// a button on a message we posted. We verify the request signature,
+// parse the action, update the alert, and log the disposition.
+//
+// Action IDs handled: ack, snooze_1d, snooze_3d, snooze_1w, dismiss, mark_done
+//
+// Requires Edge Function secret: SLACK_SIGNING_SECRET
+// Must be deployed with verify_jwt=false (Slack doesn't send JWT).
+// ════════════════════════════════════════════════════════════════════
 
-import { preflight, json } from '../_shared/cors.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-slack-signature, x-slack-request-timestamp',
+};
+function preflight(req: Request): Response | null {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  return null;
+}
+
+// ─── verify Slack signing secret (v0 scheme) ───────────────────────
+async function verifySlackSignature(
+  body: string,
+  timestamp: string,
+  signature: string,
+  signingSecret: string,
+): Promise<boolean> {
+  // Reject timestamps older than 5 minutes (replay protection)
+  const tsNum = Number(timestamp);
+  if (!Number.isFinite(tsNum)) return false;
+  if (Math.abs(Date.now() / 1000 - tsNum) > 300) return false;
+
+  const base = `v0:${timestamp}:${body}`;
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw', enc.encode(signingSecret),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+  );
+  const sigBuf = await crypto.subtle.sign('HMAC', key, enc.encode(base));
+  const computed = 'v0=' + Array.from(new Uint8Array(sigBuf))
+    .map((b) => b.toString(16).padStart(2, '0')).join('');
+
+  // Constant-time-ish comparison
+  if (computed.length !== signature.length) return false;
+  let diff = 0;
+  for (let i = 0; i < computed.length; i++) {
+    diff |= computed.charCodeAt(i) ^ signature.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+// ─── action → alert update ─────────────────────────────────────────
+function actionToUpdate(actionId: string, nowIso: string) {
+  switch (actionId) {
+    case 'ack':
+      return {
+        status: 'acknowledged',
+        snooze_duration_hours: null,
+        snooze_until: null,
+        closed_at: null,
+        disposition: 'acknowledged',
+      };
+    case 'snooze_1d':
+      return {
+        status: 'snoozed',
+        snooze_duration_hours: 24,
+        snooze_until: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+        closed_at: null,
+        disposition: 'snoozed',
+      };
+    case 'snooze_3d':
+      return {
+        status: 'snoozed',
+        snooze_duration_hours: 72,
+        snooze_until: new Date(Date.now() + 72 * 3600 * 1000).toISOString(),
+        closed_at: null,
+        disposition: 'snoozed',
+      };
+    case 'snooze_1w':
+      return {
+        status: 'snoozed',
+        snooze_duration_hours: 168,
+        snooze_until: new Date(Date.now() + 168 * 3600 * 1000).toISOString(),
+        closed_at: null,
+        disposition: 'snoozed',
+      };
+    case 'dismiss':
+      return {
+        status: 'dismissed',
+        snooze_duration_hours: null,
+        snooze_until: null,
+        closed_at: nowIso,
+        disposition: 'dismissed',
+      };
+    case 'mark_done':
+      return {
+        status: 'done',
+        snooze_duration_hours: null,
+        snooze_until: null,
+        closed_at: nowIso,
+        disposition: 'marked_done',
+      };
+    default:
+      return null;
+  }
+}
 
 Deno.serve(async (req) => {
   const pre = preflight(req);
   if (pre) return pre;
 
-  return json({ ok: true, function: 'slack-interactions' });
+  try {
+    if (req.method !== 'POST') {
+      return new Response('method not allowed', { status: 405, headers: corsHeaders });
+    }
+
+    const signingSecret = Deno.env.get('SLACK_SIGNING_SECRET');
+    if (!signingSecret) {
+      return new Response('SLACK_SIGNING_SECRET missing', { status: 500, headers: corsHeaders });
+    }
+
+    const rawBody = await req.text();
+    const sig = req.headers.get('x-slack-signature') ?? '';
+    const ts = req.headers.get('x-slack-request-timestamp') ?? '';
+    const valid = await verifySlackSignature(rawBody, ts, sig, signingSecret);
+    if (!valid) {
+      return new Response('invalid signature', { status: 401, headers: corsHeaders });
+    }
+
+    // Slack interactivity payloads come as form-urlencoded with a
+    // `payload` field containing JSON.
+    const form = new URLSearchParams(rawBody);
+    const payloadStr = form.get('payload');
+    if (!payloadStr) {
+      return new Response('missing payload', { status: 400, headers: corsHeaders });
+    }
+    const payload = JSON.parse(payloadStr);
+    const action = payload?.actions?.[0];
+    if (!action) {
+      return new Response('no action', { status: 400, headers: corsHeaders });
+    }
+
+    const alertId = action.value as string;
+    const actionId = action.action_id as string;
+    const nowIso = new Date().toISOString();
+
+    const update = actionToUpdate(actionId, nowIso);
+    if (!update) {
+      return new Response(`unknown action_id: ${actionId}`, { status: 400, headers: corsHeaders });
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    const { error: upErr } = await supabase
+      .from('alerts')
+      .update({
+        status: update.status,
+        snooze_until: update.snooze_until,
+        closed_at: update.closed_at,
+      })
+      .eq('id', alertId);
+    if (upErr) {
+      console.error('alert update:', upErr.message);
+    }
+
+    await supabase.from('alert_dispositions').insert({
+      alert_id: alertId,
+      action: update.disposition,
+      snooze_duration_hours: update.snooze_duration_hours,
+    });
+
+    // Respond with a replacement message so the user sees the update in Slack.
+    const verb =
+      update.status === 'acknowledged' ? 'Acked'
+      : update.status === 'snoozed' ? `Snoozed (${update.snooze_duration_hours}h)`
+      : update.status === 'dismissed' ? 'Dismissed'
+      : update.status === 'done' ? 'Marked done'
+      : 'Updated';
+
+    return new Response(JSON.stringify({
+      replace_original: true,
+      text: `:white_check_mark: ${verb}: ${(payload?.message?.attachments?.[0]?.blocks?.[0]?.text?.text ?? payload?.message?.text ?? 'alert').replace(/^[:\s\w]+\s/, '')}`,
+    }), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('slack-interactions error:', msg);
+    return new Response(`error: ${msg}`, { status: 500, headers: corsHeaders });
+  }
 });

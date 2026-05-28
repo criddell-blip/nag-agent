@@ -1,5 +1,5 @@
-// evaluate-rules v3 — plain insert + pre-filter for idempotency
-// (upsert+ignoreDuplicates was silently dropping in the JS client).
+// evaluate-rules v4 — creates alerts only.
+// Notification + re-nag are owned by slack-notify (not this function).
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -188,27 +188,12 @@ async function evaluate(supabase: SupabaseClient) {
     alertsCreated += (inserted?.length ?? 0);
   }
 
-  const nowIso = new Date().toISOString();
-  const hourlyCutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  const dailyCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  let renagBumped = 0;
-  for (const rule of (rules ?? []) as RuleRow[]) {
-    const renag = rule.actions.re_nag;
-    if (!renag || renag === 'none') continue;
-    const cutoff = renag === 'hourly' ? hourlyCutoff : dailyCutoff;
-    const { data: bumped } = await supabase
-      .from('alerts').update({ last_notified_at: nowIso })
-      .eq('rule_id', rule.id).eq('status', 'open')
-      .or(`last_notified_at.is.null,last_notified_at.lt.${cutoff}`)
-      .select('id');
-    renagBumped += (bumped?.length ?? 0);
-  }
-
+  // Notification + re-nag policy is owned by slack-notify, not this
+  // function. evaluate-rules only ever creates new alerts.
   return {
     rules_evaluated: rules?.length ?? 0,
     events_scanned: events?.length ?? 0,
     alerts_created: alertsCreated,
-    alerts_renag_bumped: renagBumped,
     per_rule: perRule,
   };
 }
