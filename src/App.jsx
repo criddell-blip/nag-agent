@@ -1,12 +1,31 @@
 import { useEffect, useState } from 'react';
-import { listOpenAlerts, listRules } from './lib/supabase.js';
+import { db, listOpenAlerts, listRules, isConfigured } from './lib/supabase.js';
+import LoginScreen from './components/LoginScreen.jsx';
 
 export default function App() {
+  const [session, setSession] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
   const [alerts, setAlerts] = useState([]);
   const [rules, setRules] = useState([]);
   const [err, setErr] = useState(null);
 
+  // ─── auth state ──────────────────────────────────────────────────
   useEffect(() => {
+    if (!isConfigured) {
+      setAuthReady(true);
+      return;
+    }
+    db.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setAuthReady(true);
+    });
+    const { data: sub } = db.auth.onAuthStateChange((_event, s) => setSession(s));
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  // ─── load data once signed in ────────────────────────────────────
+  useEffect(() => {
+    if (!session) return;
     (async () => {
       try {
         const [a, r] = await Promise.all([listOpenAlerts(), listRules()]);
@@ -16,11 +35,43 @@ export default function App() {
         setErr(e.message);
       }
     })();
-  }, []);
+  }, [session]);
+
+  if (!isConfigured) {
+    return (
+      <div className="app">
+        <h1 className="h1">Nag agent</h1>
+        <div className="card" style={{ borderColor: 'var(--rust)' }}>
+          <strong>Setup needed.</strong>
+          <p className="sub" style={{ marginTop: 6 }}>
+            <code>VITE_SUPABASE_ANON_KEY</code> isn't set. To fix:
+          </p>
+          <ol style={{ marginTop: 8, paddingLeft: 20, fontSize: 14, lineHeight: 1.7 }}>
+            <li>Copy <code>.env.example</code> to <code>.env</code></li>
+            <li>Open the Supabase dashboard → <strong>Nag agent</strong> → Settings → API</li>
+            <li>Copy the <strong>anon / publishable</strong> key</li>
+            <li>Paste it into <code>.env</code> as <code>VITE_SUPABASE_ANON_KEY=...</code></li>
+            <li>Restart <code>npm run dev</code> (env vars only load at startup)</li>
+          </ol>
+        </div>
+      </div>
+    );
+  }
+
+  if (!authReady) return null;
+  if (!session) return <LoginScreen />;
 
   return (
     <div className="app">
-      <h1 className="h1">Nag agent</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+        <h1 className="h1" style={{ margin: 0 }}>Nag agent</h1>
+        <button
+          onClick={() => db.auth.signOut()}
+          style={{ background: 'transparent', border: '1px solid var(--line)', padding: '4px 10px', fontSize: 12, borderRadius: 4, cursor: 'pointer', color: 'var(--ink-soft)' }}
+        >
+          Sign out · {session.user.email}
+        </button>
+      </div>
       <p className="sub">v0.1 · skeleton · connected to {import.meta.env.VITE_SUPABASE_URL}</p>
 
       {err && (
