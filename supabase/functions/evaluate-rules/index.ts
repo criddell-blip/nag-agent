@@ -1,4 +1,5 @@
-// evaluate-rules v4 — creates alerts only.
+// evaluate-rules v5 — creates alerts only; context_links include both
+// the ClickUp desktop deep-link (clickup://) and the web URL.
 // Notification + re-nag are owned by slack-notify (not this function).
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -115,6 +116,20 @@ function renderTitle(template: string, event: EventRow): string {
     .replace(/\{sender\}/g, event.sender ?? '(unknown)');
 }
 
+// Build context links for an alert. For ClickUp events, include both
+// the desktop app deep-link (clickup://) and the web URL so the user
+// can pick whichever opens fastest.
+function buildContextLinks(e: EventRow): Array<{ label: string; url: string }> | null {
+  const links: Array<{ label: string; url: string }> = [];
+  if (e.source === 'clickup' && e.external_id) {
+    links.push({ label: 'App', url: `clickup://t/${e.external_id}` });
+  }
+  if (e.external_url) {
+    links.push({ label: 'Web', url: e.external_url });
+  }
+  return links.length > 0 ? links : null;
+}
+
 async function evaluate(supabase: SupabaseClient) {
   const { data: rules, error: rulesErr } = await supabase
     .from('rules').select('id, name, conditions, actions').eq('enabled', true);
@@ -170,7 +185,7 @@ async function evaluate(supabase: SupabaseClient) {
         severity: rule.actions.severity,
         title: renderTitle(rule.actions.title_template ?? '{subject}', e),
         body: e.body_excerpt?.slice(0, 400) ?? null,
-        context_links: e.external_url ? [{ label: 'Open', url: e.external_url }] : null,
+        context_links: buildContextLinks(e),
         status: 'open',
       });
     }

@@ -1,11 +1,12 @@
 // ════════════════════════════════════════════════════════════════════
-// slack-notify · Scheduled every 5 min via pg_cron.
+// slack-notify v2 · Scheduled every 5 min via pg_cron.
 //
-// Owns Slack notification + re-nag policy.
-//   - Alert with last_notified_at = NULL → first DM
-//   - Alert with re_nag='hourly' and last_notified_at < now - 1h → re-DM
-//   - Alert with re_nag='daily' and last_notified_at < today's 06:00 MT → re-DM
-//   - Alert with re_nag='none' → only first DM, never re-nag
+// Owns Slack notification + re-nag policy AND snooze reactivation.
+//   - snoozed alerts with snooze_until < now → flipped back to open
+//   - open alert with last_notified_at = NULL → first DM
+//   - open alert, re_nag='hourly', last_notified_at < now-1h → re-DM
+//   - open alert, re_nag='daily', last_notified_at < today 06:00 MT → re-DM
+//   - re_nag='none' → first DM only, never re-nag
 //
 // Quiet hours 22:00–06:00 MT: skip the run entirely. The 06:00 tick
 // catches everything that piled up overnight.
@@ -197,6 +198,17 @@ Deno.serve(async (req) => {
 
     const userId = await getUserId(supabase, botToken);
 
+    // ─── reactivate expired snoozes ────────────────────────────────
+    // Flip snoozed→open for any alert whose snooze_until is in the past.
+    // Clear last_notified_at so they re-enter the notification queue.
+    const { data: reactivated } = await supabase
+      .from('alerts')
+      .update({ status: 'open', snooze_until: null, last_notified_at: null })
+      .eq('status', 'snoozed')
+      .lte('snooze_until', new Date().toISOString())
+      .select('id');
+    const reactivatedCount = reactivated?.length ?? 0;
+
     // Pull open alerts + their rules so we know each one's re_nag policy.
     const { data: alerts, error: aErr } = await supabase
       .from('alerts')
@@ -241,6 +253,7 @@ Deno.serve(async (req) => {
     return json({
       ok: true, function: 'slack-notify',
       user_id: userId,
+      reactivated: reactivatedCount,
       candidates: alerts?.length ?? 0,
       sent: results.filter((r) => r.sent).length,
       failed: results.filter((r) => !r.sent).length,
