@@ -1,5 +1,14 @@
-// ingest-clickup v4 — multi-team iteration, filters out done/closed status types
-// (ClickUp's include_closed=false only catches type='closed', not 'done').
+// ingest-clickup v5 — always full-fetch + per-team reconciliation.
+//
+// Why no incremental sync: at our scale (~hundreds-low-thousands of tasks)
+// full-fetch is cheap (~30s) and gives us the data we need to detect
+// deletions. Tasks that disappear from ClickUp (deleted, closed, moved
+// out of scope, permission revoked) get marked inactive here and their
+// open alerts get auto-closed.
+//
+// Per-team scoped: if a team's fetch errors out, we skip that team's
+// reconciliation entirely — we don't want a transient API failure to
+// nuke valid events from other teams.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -14,10 +23,7 @@ function preflight(req: Request): Response | null {
   return null;
 }
 function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  });
+  return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 }
 
 interface ClickUpTask {
@@ -31,7 +37,6 @@ interface ClickUpTask {
   list?: { name?: string }; folder?: { name?: string }; space?: { name?: string };
   team_id?: string;
 }
-interface IntegrationRow { service: string; sync_cursor: string | null; last_sync_at: string | null; }
 
 function msToIso(ms?: string | null): string | null {
   if (!ms) return null;
@@ -51,7 +56,7 @@ async function clickupGet(path: string, token: string): Promise<any> {
   return res.json();
 }
 
-async function fetchTasksAtTeam(token: string, teamId: string, sinceMs: number | null) {
+async function fetchAllActiveTasks(token: string, teamId: string): Promise<ClickUpTask[]> {
   const tasks: ClickUpTask[] = [];
   let page = 0;
   const MAX_PAGES = 10;
@@ -61,7 +66,6 @@ async function fetchTasksAtTeam(token: string, teamId: string, sinceMs: number |
       subtasks: 'true',
       include_closed: 'false',
     };
-    if (sinceMs !== null) params.date_updated_gt = String(sinceMs);
     const url = `/team/${teamId}/task?${new URLSearchParams(params)}`;
     const data = await clickupGet(url, token);
     const batch: ClickUpTask[] = data?.tasks ?? [];
@@ -73,7 +77,7 @@ async function fetchTasksAtTeam(token: string, teamId: string, sinceMs: number |
   return tasks;
 }
 
-function isActiveTask(t: ClickUpTask): boolean {
+function isActive(t: ClickUpTask): boolean {
   const type = (t.status?.type ?? '').toLowerCase();
   return type !== 'closed' && type !== 'done';
 }
@@ -102,7 +106,6 @@ function taskToEvent(task: ClickUpTask): Record<string, unknown> {
 Deno.serve(async (req) => {
   const pre = preflight(req);
   if (pre) return pre;
-
   const t0 = Date.now();
   try {
     const token = Deno.env.get('CLICKUP_API_TOKEN');
@@ -113,21 +116,13 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    const { data: integration } = await supabase
-      .from('integrations')
-      .select('service, sync_cursor, last_sync_at')
-      .eq('service', 'clickup')
-      .maybeSingle<IntegrationRow>();
-
-    const isFirstRun = !integration?.sync_cursor;
-    const sinceMs = integration?.sync_cursor ? Number(integration.sync_cursor) : Date.now() - 30 * 24 * 60 * 60 * 1000;
-
     const teamsRaw = await clickupGet('/team', token);
     const teams = (teamsRaw?.teams ?? []) as Array<{ id: string; name: string; members?: any[] }>;
     if (teams.length === 0) throw new Error('No ClickUp teams accessible.');
 
     const perTeam: any[] = [];
     const allTasks: ClickUpTask[] = [];
+    const successfulTeamIds: string[] = [];
 
     for (const team of teams) {
       if (/\(test\)/i.test(team.name)) {
@@ -135,25 +130,18 @@ Deno.serve(async (req) => {
         continue;
       }
       try {
-        const filtered = await fetchTasksAtTeam(token, team.id, sinceMs);
-        let teamTasks = filtered;
-        if (teamTasks.length === 0 && isFirstRun) {
-          teamTasks = await fetchTasksAtTeam(token, team.id, null);
-        }
-        // Filter out done/closed status types (include_closed=false misses 'done').
-        const before = teamTasks.length;
-        teamTasks = teamTasks.filter(isActiveTask);
-        teamTasks.forEach((t) => { t.team_id = team.id; });
-        allTasks.push(...teamTasks);
-        perTeam.push({
-          team_id: team.id, name: team.name,
-          fetched: before, active_after_filter: teamTasks.length,
-        });
+        const raw = await fetchAllActiveTasks(token, team.id);
+        const active = raw.filter(isActive);
+        active.forEach((t) => { t.team_id = team.id; });
+        allTasks.push(...active);
+        successfulTeamIds.push(team.id);
+        perTeam.push({ team_id: team.id, name: team.name, fetched: raw.length, kept_active: active.length });
       } catch (e) {
-        perTeam.push({ team_id: team.id, name: team.name, error: e instanceof Error ? e.message : String(e) });
+        perTeam.push({ team_id: team.id, name: team.name, error: e instanceof Error ? e.message : String(e), reconciliation_skipped: true });
       }
     }
 
+    // Dedup by task ID across teams.
     const seen = new Set<string>();
     const dedup = allTasks.filter((t) => {
       if (seen.has(t.id)) return false;
@@ -161,6 +149,7 @@ Deno.serve(async (req) => {
       return true;
     });
 
+    // ─── upsert active tasks ─────────────────────────────────────────
     let ingested = 0;
     if (dedup.length > 0) {
       const rows = dedup.map(taskToEvent);
@@ -171,21 +160,52 @@ Deno.serve(async (req) => {
       ingested = rows.length;
     }
 
-    let nextCursor = String(sinceMs);
-    if (dedup.length > 0) {
-      const maxUpdated = dedup.reduce((max, t) => Math.max(max, Number(t.date_updated) || 0), 0);
-      if (maxUpdated > 0) nextCursor = String(maxUpdated);
+    // ─── reconcile: close events+alerts for tasks not seen this run ──
+    let eventsClosed = 0;
+    let alertsClosed = 0;
+    if (successfulTeamIds.length > 0) {
+      const fetchedIdsByTeam = new Map<string, Set<string>>();
+      for (const t of dedup) {
+        if (!t.team_id) continue;
+        if (!fetchedIdsByTeam.has(t.team_id)) fetchedIdsByTeam.set(t.team_id, new Set());
+        fetchedIdsByTeam.get(t.team_id)!.add(t.id);
+      }
+      for (const teamId of successfulTeamIds) {
+        const fetched = fetchedIdsByTeam.get(teamId) ?? new Set();
+        const { data: stale } = await supabase
+          .from('events')
+          .select('id, external_id')
+          .eq('source', 'clickup')
+          .neq('status', 'inactive')
+          .filter('raw_metadata->>team_id', 'eq', teamId);
+        const ghosts = (stale ?? []).filter((e: any) => !fetched.has(e.external_id));
+        if (ghosts.length === 0) continue;
+        const ghostIds = ghosts.map((g: any) => g.id);
+        await supabase.from('events').update({ status: 'inactive' }).in('id', ghostIds);
+        eventsClosed += ghostIds.length;
+        const { data: closedAlerts } = await supabase
+          .from('alerts')
+          .update({ status: 'done', closed_at: new Date().toISOString() })
+          .in('event_id', ghostIds)
+          .eq('status', 'open')
+          .select('id');
+        alertsClosed += (closedAlerts?.length ?? 0);
+      }
     }
 
     await supabase.from('integrations').upsert(
-      { service: 'clickup', sync_cursor: nextCursor, last_sync_at: new Date().toISOString(), active: true },
+      { service: 'clickup', sync_cursor: String(Date.now()), last_sync_at: new Date().toISOString(), active: true },
       { onConflict: 'service' },
     );
 
     return json({
       ok: true, function: 'ingest-clickup',
-      ingested, sync_cursor: nextCursor,
+      ingested,
       per_team: perTeam,
+      reconciled: {
+        events_marked_inactive: eventsClosed,
+        alerts_auto_closed: alertsClosed,
+      },
       took_ms: Date.now() - t0,
     });
   } catch (e) {
