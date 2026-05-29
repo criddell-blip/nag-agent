@@ -217,12 +217,22 @@ details[open] > .list-summary::before { content: '▾'; }
 
 .task-meta {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
   flex-shrink: 0;
   font-size: 11px;
   color: var(--ink-faint);
 }
+
+.task-link {
+  font-size: 10px;
+  color: var(--ink-faint);
+  border: 1px solid var(--line-soft);
+  border-radius: 2px;
+  padding: 0 4px;
+  text-decoration: none;
+}
+.task-link:hover { color: var(--rust); border-color: var(--rust-soft); }
 
 .task-status {
   text-transform: capitalize;

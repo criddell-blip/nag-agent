@@ -214,17 +214,11 @@ function ActiveWorkPane({ tasks }) {
                 const overdue = t.due_at && new Date(t.due_at) < new Date();
                 const appUrl = t.external_id ? `clickup://open?taskId=${t.external_id}` : null;
                 return (
-                  <div key={t.id} className="task-row">
-                    <div className="task-subject">
-                      <span>{t.subject || '(no name)'}</span>
-                      {(appUrl || t.external_url) && (
-                        <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--ink-faint)' }}>
-                          {appUrl && <a href={appUrl} style={{ marginRight: 6 }}>app</a>}
-                          {t.external_url && <a href={t.external_url} target="_blank" rel="noreferrer">web</a>}
-                        </span>
-                      )}
-                    </div>
+                  <div key={t.id} className="task-row" title={t.subject || ''}>
+                    <div className="task-subject">{t.subject || '(no name)'}</div>
                     <div className="task-meta">
+                      {appUrl && <a href={appUrl} className="task-link">app</a>}
+                      {t.external_url && <a href={t.external_url} target="_blank" rel="noreferrer" className="task-link">web</a>}
                       {t.status && <span className="task-status">{t.status}</span>}
                       {t.due_at && (
                         <span className={overdue ? 'task-overdue' : 'task-due'}>
