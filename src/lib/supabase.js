@@ -92,3 +92,48 @@ export async function countPeopleByPriority() {
   for (const p of data ?? []) counts[p.priority_tier] = (counts[p.priority_tier] ?? 0) + 1;
   return counts;
 }
+
+// ─── app_settings helpers ──────────────────────────────────────────
+export async function getAppSetting(key) {
+  const { data, error } = await db
+    .from('app_settings').select('value, updated_at').eq('key', key).maybeSingle();
+  if (error) throw error;
+  return data ?? null;
+}
+
+export async function setAppSetting(key, value) {
+  const { data: existing } = await db.from('app_settings').select('id').eq('key', key).maybeSingle();
+  const row = { key, value, updated_at: new Date().toISOString() };
+  if (existing) {
+    const { error } = await db.from('app_settings').update(row).eq('id', existing.id);
+    if (error) throw error;
+  } else {
+    const { error } = await db.from('app_settings').insert(row);
+    if (error) throw error;
+  }
+}
+
+export async function listDiscoveredFolders() {
+  // Distinct folder names across all clickup events (active + inactive)
+  const { data, error } = await db
+    .from('events')
+    .select('raw_metadata')
+    .eq('source', 'clickup')
+    .not('raw_metadata->>folder', 'is', null);
+  if (error) throw error;
+  const counts = new Map();
+  for (const e of data ?? []) {
+    const f = e.raw_metadata?.folder;
+    if (!f) continue;
+    counts.set(f, (counts.get(f) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
+export async function triggerIngest(functionName) {
+  const { data, error } = await db.functions.invoke(functionName);
+  if (error) throw error;
+  return data;
+}

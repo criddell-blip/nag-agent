@@ -10,13 +10,15 @@ import {
   listActiveTasks,
 } from './lib/supabase.js';
 import LoginScreen from './components/LoginScreen.jsx';
+import SettingsPage from './components/SettingsPage.jsx';
 
 // ════════════════════════════════════════════════════════════════════
-// Three-pane dashboard:
-//   Left   — Calendar (next 14 days of meetings)
-//   Center — Active work (ClickUp tasks grouped by list)
-//   Right  — Open alerts (grouped by severity)
-// Mobile: stacks single-column with alerts first.
+// Editorial-style dashboard.
+//   Masthead (DOC.NAG metadata + serif title)
+//   Stats strip
+//   Three-pane: Calendar · Active work · Open alerts
+//   Secondary collapsible: rules / integrations / people
+// Mobile: stacks, alerts pinned to top.
 // ════════════════════════════════════════════════════════════════════
 
 const SEVERITY_ORDER = { critical: 0, warn: 1, info: 2 };
@@ -24,53 +26,14 @@ const SEVERITY_ORDER = { critical: 0, warn: 1, info: 2 };
 export default function App() {
   const [session, setSession] = useState(null);
   const [authReady, setAuthReady] = useState(false);
-  const [alerts, setAlerts] = useState([]);
-  const [meetings, setMeetings] = useState([]);
-  const [tasks, setTasks] = useState([]);
-  const [rules, setRules] = useState([]);
-  const [integrations, setIntegrations] = useState([]);
-  const [peopleCounts, setPeopleCounts] = useState({});
-  const [err, setErr] = useState(null);
-  const [showSecondary, setShowSecondary] = useState(false);
+  const [view, setView] = useState('dashboard');  // 'dashboard' | 'settings'
 
   useEffect(() => {
     if (!isConfigured) { setAuthReady(true); return; }
-    db.auth.getSession().then(({ data }) => {
-      setSession(data.session); setAuthReady(true);
-    });
+    db.auth.getSession().then(({ data }) => { setSession(data.session); setAuthReady(true); });
     const { data: sub } = db.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => sub.subscription.unsubscribe();
   }, []);
-
-  useEffect(() => {
-    if (!session) return;
-    let cancelled = false;
-    async function loadAll() {
-      try {
-        const [a, m, t, r, ints, pc] = await Promise.all([
-          listOpenAlerts(),
-          listUpcomingMeetings(14),
-          listActiveTasks(),
-          listRules(),
-          listIntegrations(),
-          countPeopleByPriority(),
-        ]);
-        if (cancelled) return;
-        setAlerts(a); setMeetings(m); setTasks(t); setRules(r);
-        setIntegrations(ints); setPeopleCounts(pc);
-      } catch (e) {
-        if (!cancelled) setErr(e.message);
-      }
-    }
-    loadAll();
-    const ch = db
-      .channel('nag-dashboard-' + Date.now())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'alerts' }, loadAll)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'events' }, loadAll)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'integrations' }, loadAll)
-      .subscribe();
-    return () => { cancelled = true; db.removeChannel(ch); };
-  }, [session]);
 
   if (!isConfigured) {
     return (
@@ -88,17 +51,85 @@ export default function App() {
 
   if (!authReady) return null;
   if (!session) return <LoginScreen />;
+  if (view === 'settings') return <SettingsPage onBack={() => setView('dashboard')} />;
+
+  return <Dashboard session={session} onOpenSettings={() => setView('settings')} />;
+}
+
+// ─── Dashboard ────────────────────────────────────────────────────
+function Dashboard({ session, onOpenSettings }) {
+  const [alerts, setAlerts] = useState([]);
+  const [meetings, setMeetings] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [rules, setRules] = useState([]);
+  const [integrations, setIntegrations] = useState([]);
+  const [peopleCounts, setPeopleCounts] = useState({});
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadAll() {
+      try {
+        const [a, m, t, r, ints, pc] = await Promise.all([
+          listOpenAlerts(),
+          listUpcomingMeetings(14),
+          listActiveTasks(),
+          listRules(),
+          listIntegrations(),
+          countPeopleByPriority(),
+        ]);
+        if (cancelled) return;
+        setAlerts(a); setMeetings(m); setTasks(t); setRules(r);
+        setIntegrations(ints); setPeopleCounts(pc);
+      } catch (e) { if (!cancelled) setErr(e.message); }
+    }
+    loadAll();
+    const ch = db
+      .channel('nag-dashboard-' + Date.now())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'alerts' }, loadAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'events' }, loadAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'integrations' }, loadAll)
+      .subscribe();
+    return () => { cancelled = true; db.removeChannel(ch); };
+  }, []);
+
+  const critical = alerts.filter((a) => a.severity === 'critical').length;
+  const warn = alerts.filter((a) => a.severity === 'warn').length;
+  const meetingsToday = meetings.filter((m) => isToday(m.due_at)).length;
+  const lastSync = integrations.length > 0
+    ? integrations.reduce((max, i) => (i.last_sync_at && (!max || i.last_sync_at > max)) ? i.last_sync_at : max, null)
+    : null;
+  const syncAgo = lastSync ? minutesAgo(lastSync) : null;
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: '2-digit', year: 'numeric' });
 
   return (
     <div className="dashboard">
-      <Header
-        session={session}
-        alerts={alerts}
-        meetings={meetings}
-        tasks={tasks}
-        integrations={integrations}
-        onSignOut={() => db.auth.signOut()}
-      />
+      <header className="masthead">
+        <div className="doc-meta">
+          <span><span className="doc-id">DOC.NAG</span> · UTAH BROADBAND</span>
+          <span>{today.toUpperCase()}</span>
+        </div>
+        <h1 className="title">Nag agent <em>· daily</em></h1>
+        <p className="subtitle">
+          {critical > 0 && <strong style={{ color: 'var(--rust)' }}>{critical} critical · </strong>}
+          {alerts.length} open alerts · {meetings.length} meetings ahead · {tasks.length} active tasks
+        </p>
+        <div className="masthead-actions">
+          <button onClick={onOpenSettings} className="btn-ghost">⚙ Settings</button>
+          <button onClick={() => db.auth.signOut()} className="btn-ghost" title={session.user.email}>
+            Sign out
+          </button>
+        </div>
+      </header>
+
+      {/* ─── stats strip ───────────────────────────── */}
+      <div className="stats">
+        <Stat val={critical} label="Critical" tone={critical > 0 ? 'rust' : ''} />
+        <Stat val={warn} label="Warning" />
+        <Stat val={meetingsToday} label="Today's mtgs" />
+        <Stat val={syncAgo === null ? '—' : `${syncAgo}m`} label="Last sync" />
+      </div>
+
       {err && (
         <div className="card" style={{ borderColor: 'var(--rust)', color: 'var(--rust)', marginBottom: 12 }}>
           {err}
@@ -111,58 +142,32 @@ export default function App() {
         <AlertsPane alerts={alerts} />
       </div>
 
-      <SecondaryPanels
-        open={showSecondary}
-        onToggle={() => setShowSecondary((v) => !v)}
-        rules={rules}
-        integrations={integrations}
-        peopleCounts={peopleCounts}
-      />
+      <SecondaryPanels rules={rules} integrations={integrations} peopleCounts={peopleCounts} />
     </div>
   );
 }
 
-// ─── Header ────────────────────────────────────────────────────────
-function Header({ session, alerts, meetings, tasks, integrations, onSignOut }) {
-  const open = alerts.length;
-  const critical = alerts.filter((a) => a.severity === 'critical').length;
-  const upcoming = meetings.length;
-  const taskCount = tasks.length;
-  const lastSync = integrations.length > 0
-    ? integrations.reduce((max, i) => (i.last_sync_at && (!max || i.last_sync_at > max)) ? i.last_sync_at : max, null)
-    : null;
-  const syncAgo = lastSync ? minutesAgo(lastSync) : null;
-
+function Stat({ val, label, tone }) {
   return (
-    <header className="header">
-      <div>
-        <h1 className="h1" style={{ margin: 0 }}>Nag agent</h1>
-        <p className="sub" style={{ marginTop: 2, fontSize: 12 }}>
-          v0.3 ·{' '}
-          {critical > 0 && <strong style={{ color: 'var(--rust)' }}>{critical} critical · </strong>}
-          {open} open · {upcoming} mtgs · {taskCount} tasks
-          {syncAgo !== null && <> · synced {syncAgo}m ago</>}
-        </p>
-      </div>
-      <button
-        onClick={onSignOut}
-        className="btn-ghost"
-        title={session.user.email}
-      >
-        Sign out
-      </button>
-    </header>
+    <div className="stat">
+      <div className={`stat-val ${tone === 'rust' ? 'stat-rust' : ''}`}>{val}</div>
+      <div className="stat-lbl">{label}</div>
+    </div>
   );
 }
 
-// ─── Calendar pane ────────────────────────────────────────────────
+// ─── Calendar pane ───────────────────────────────────────────────
 function CalendarPane({ meetings }) {
   const groups = groupByDay(meetings, 'due_at');
   return (
     <section className="pane">
-      <h2 className="pane-h">Calendar <span className="pane-count">{meetings.length}</span></h2>
+      <div className="pane-head">
+        <span className="pane-num">§ 01</span>
+        <h2 className="pane-title">Calendar</h2>
+        <span className="pane-count">{meetings.length}</span>
+      </div>
       {meetings.length === 0 ? (
-        <p className="sub">No meetings in the next 14 days.</p>
+        <p className="sub" style={{ fontStyle: 'italic' }}>No meetings in the next 14 days.</p>
       ) : (
         Object.entries(groups).map(([dayLabel, items]) => (
           <div key={dayLabel} className="day-group">
@@ -172,9 +177,7 @@ function CalendarPane({ meetings }) {
                 <div className="meeting-time">{formatTime(m.due_at)}</div>
                 <div className="meeting-body">
                   <div className="meeting-subject">{m.subject || '(no title)'}</div>
-                  {m.sender && (
-                    <div className="meeting-meta">{m.sender}</div>
-                  )}
+                  {m.sender && <div className="meeting-meta">{m.sender}</div>}
                 </div>
               </div>
             ))}
@@ -185,23 +188,25 @@ function CalendarPane({ meetings }) {
   );
 }
 
-// ─── Active work pane (ClickUp tasks) ─────────────────────────────
+// ─── Active work pane (ClickUp) ──────────────────────────────────
 function ActiveWorkPane({ tasks }) {
-  // Group tasks by ClickUp list name
   const byList = new Map();
   for (const t of tasks) {
     const list = t.raw_metadata?.list ?? '(unlisted)';
     if (!byList.has(list)) byList.set(list, []);
     byList.get(list).push(t);
   }
-  // Sort lists by total count descending so busiest list is on top
   const sorted = [...byList.entries()].sort((a, b) => b[1].length - a[1].length);
 
   return (
     <section className="pane">
-      <h2 className="pane-h">Active work <span className="pane-count">{tasks.length}</span></h2>
+      <div className="pane-head">
+        <span className="pane-num">§ 02</span>
+        <h2 className="pane-title">Active work</h2>
+        <span className="pane-count">{tasks.length}</span>
+      </div>
       {tasks.length === 0 ? (
-        <p className="sub">No ClickUp tasks ingested.</p>
+        <p className="sub" style={{ fontStyle: 'italic' }}>No ClickUp tasks in scope.</p>
       ) : (
         sorted.slice(0, 20).map(([listName, items]) => (
           <details key={listName} className="list-group" open={items.length <= 5}>
@@ -242,7 +247,7 @@ function ActiveWorkPane({ tasks }) {
   );
 }
 
-// ─── Alerts pane ──────────────────────────────────────────────────
+// ─── Alerts pane ─────────────────────────────────────────────────
 function AlertsPane({ alerts }) {
   const sorted = [...alerts].sort(
     (a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9),
@@ -252,16 +257,18 @@ function AlertsPane({ alerts }) {
 
   return (
     <section className="pane">
-      <h2 className="pane-h">Open alerts <span className="pane-count">{alerts.length}</span></h2>
+      <div className="pane-head">
+        <span className="pane-num">§ 03</span>
+        <h2 className="pane-title">Open alerts</h2>
+        <span className="pane-count">{alerts.length}</span>
+      </div>
       {alerts.length === 0 ? (
-        <p className="sub">All clear — no open alerts.</p>
+        <p className="sub" style={{ fontStyle: 'italic' }}>All clear — no open alerts.</p>
       ) : (
         ['critical', 'warn', 'info'].map((sev) => (
           groups[sev].length > 0 && (
             <div key={sev} className="severity-group">
-              <div className={`severity-label severity-${sev}`}>
-                {sev.toUpperCase()} · {groups[sev].length}
-              </div>
+              <div className={`severity-label severity-${sev}`}>{sev.toUpperCase()} · {groups[sev].length}</div>
               {groups[sev].slice(0, 25).map((a) => (
                 <div key={a.id} className="alert-row">
                   <div className="alert-title">{a.title}</div>
@@ -287,13 +294,14 @@ function AlertsPane({ alerts }) {
   );
 }
 
-// ─── Secondary collapsible panels ─────────────────────────────────
-function SecondaryPanels({ open, onToggle, rules, integrations, peopleCounts }) {
+// ─── Secondary panels ────────────────────────────────────────────
+function SecondaryPanels({ rules, integrations, peopleCounts }) {
   const peopleTotal = Object.values(peopleCounts).reduce((s, n) => s + n, 0);
   return (
-    <details className="secondary" open={open} onToggle={onToggle}>
+    <details className="secondary">
       <summary className="secondary-summary">
-        Settings & status · {rules.filter((r) => r.enabled).length} rules · {peopleTotal} people · {integrations.length} integrations
+        <span className="pane-num">§ 04</span>
+        <span>System status · {rules.filter((r) => r.enabled).length} rules · {peopleTotal} people · {integrations.length} integrations</span>
       </summary>
       <div className="secondary-body">
         <div className="secondary-row">
@@ -323,11 +331,11 @@ function SecondaryPanels({ open, onToggle, rules, integrations, peopleCounts }) 
         <div className="secondary-row">
           <h3>People ({peopleTotal})</h3>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <Stat label="critical" n={peopleCounts.critical ?? 0} color="var(--rust)" />
-            <Stat label="high" n={peopleCounts.high ?? 0} />
-            <Stat label="normal" n={peopleCounts.normal ?? 0} />
-            <Stat label="low" n={peopleCounts.low ?? 0} />
-            <Stat label="noise" n={peopleCounts.noise ?? 0} />
+            <PStat label="critical" n={peopleCounts.critical ?? 0} color="var(--rust)" />
+            <PStat label="high" n={peopleCounts.high ?? 0} />
+            <PStat label="normal" n={peopleCounts.normal ?? 0} />
+            <PStat label="low" n={peopleCounts.low ?? 0} />
+            <PStat label="noise" n={peopleCounts.noise ?? 0} />
           </div>
         </div>
       </div>
@@ -335,7 +343,7 @@ function SecondaryPanels({ open, onToggle, rules, integrations, peopleCounts }) 
   );
 }
 
-function Stat({ label, n, color }) {
+function PStat({ label, n, color }) {
   return (
     <span style={{ fontSize: 13 }}>
       <strong style={{ color: color ?? 'inherit' }}>{n}</strong> <span className="sub">{label}</span>
@@ -343,18 +351,15 @@ function Stat({ label, n, color }) {
   );
 }
 
-// ─── helpers ──────────────────────────────────────────────────────
+// ─── helpers ─────────────────────────────────────────────────────
 function minutesAgo(iso) {
   if (!iso) return null;
   return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
 }
-
 function formatTime(iso) {
   if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/Denver' });
+  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/Denver' });
 }
-
 function dayLabel(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -365,7 +370,6 @@ function dayLabel(iso) {
   if (sameDay(d, tomorrow)) return 'Tomorrow';
   return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/Denver' });
 }
-
 function groupByDay(items, dateField) {
   const out = {};
   for (const item of items) {
@@ -375,7 +379,6 @@ function groupByDay(items, dateField) {
   }
   return out;
 }
-
 function formatRelativeDue(iso) {
   if (!iso) return '';
   const ms = new Date(iso).getTime() - Date.now();
@@ -386,4 +389,10 @@ function formatRelativeDue(iso) {
   if (days === 1) return 'tomorrow';
   if (days < 7) return `${days}d`;
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+function isToday(iso) {
+  if (!iso) return false;
+  const d = new Date(iso);
+  const t = new Date();
+  return d.getFullYear() === t.getFullYear() && d.getMonth() === t.getMonth() && d.getDate() === t.getDate();
 }
