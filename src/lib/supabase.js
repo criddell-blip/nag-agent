@@ -47,10 +47,12 @@ export async function listUpcomingMeetings(daysAhead = 14) {
 }
 
 export async function listActiveTasks() {
+  // Filter out 'inactive' events (deleted/closed/filtered-out by reconciler).
   const { data, error } = await db
     .from('events')
     .select('id, external_id, subject, sender, due_at, status, external_url, raw_metadata')
     .eq('source', 'clickup')
+    .neq('status', 'inactive')
     .order('due_at', { ascending: true, nullsFirst: false })
     .limit(300);
   if (error) throw error;
