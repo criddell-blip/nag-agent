@@ -132,12 +132,14 @@ export async function listDiscoveredFolders() {
 }
 
 // Returns: [{ folder, totalTasks, lists: [{ name, count }] }]
-// Includes ALL clickup events (active+inactive) so historical lists still show.
+// Filters to ACTIVE events only — deleted/closed/filtered-out tasks won't
+// surface stale folders or lists in the UI. (Reconciler marks them inactive.)
 export async function listFoldersWithLists() {
   const { data, error } = await db
     .from('events')
     .select('raw_metadata')
     .eq('source', 'clickup')
+    .neq('status', 'inactive')
     .not('raw_metadata->>folder', 'is', null);
   if (error) throw error;
   const folderMap = new Map();  // folder → Map<list, count>
