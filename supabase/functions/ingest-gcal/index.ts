@@ -1,12 +1,13 @@
 // ════════════════════════════════════════════════════════════════════
-// ingest-gcal v4 · pulls calendar events from a Google Calendar iCal feed.
+// ingest-gcal v5 · multi-calendar iCal feed ingest.
 //
-// No GCP / OAuth required — uses the secret iCal URL Google exposes
-// per calendar. Stored as Edge Function secret GOOGLE_CALENDAR_ICAL_URL.
+// GOOGLE_CALENDAR_ICAL_URL can be a single URL OR comma-separated URLs.
+// Pulls each calendar in parallel, parses VEVENT blocks, dedupes
+// (master+instance within calendar, plus cross-calendar UID dedup),
+// upserts into events.
 //
-// Recurring events: Google's iCal feed includes both a master (with RRULE)
-// and individual instances (with RECURRENCE-ID). We dedupe by dropping the
-// master if any instance for the same UID exists in the feed.
+// No GCP / OAuth required — uses Google's "secret iCal address" per
+// calendar (Settings → Integrate calendar → "Secret address").
 // ════════════════════════════════════════════════════════════════════
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -32,6 +33,7 @@ interface ICalEvent {
   dtend?: { value: string; tzid?: string; isDate?: boolean };
   organizer?: string; attendees: string[]; status?: string; url?: string;
   recurrenceId?: string; hasRRule?: boolean;
+  _source_url?: string;
 }
 
 function unfoldLines(raw: string): string[] {
@@ -127,7 +129,7 @@ function parseICal(text: string): ICalEvent[] {
   return events;
 }
 
-function eventToRow(ev: ICalEvent): Record<string, unknown> | null {
+function eventToRow(ev: ICalEvent, calendarHint?: string): Record<string, unknown> | null {
   if (!ev.uid || !ev.dtstart) return null;
   const start = icalToIso(ev.dtstart.value, ev.dtstart.tzid, ev.dtstart.isDate);
   if (!start) return null;
@@ -148,8 +150,26 @@ function eventToRow(ev: ICalEvent): Record<string, unknown> | null {
     occurred_at: start,
     due_at: start,
     status: (ev.status ?? 'confirmed').toLowerCase(),
-    raw_metadata: { end_at: end, location: ev.location, organizer: ev.organizer, ical_uid: ev.uid, recurrence_id: ev.recurrenceId },
+    raw_metadata: { end_at: end, location: ev.location, organizer: ev.organizer, ical_uid: ev.uid, recurrence_id: ev.recurrenceId, calendar: calendarHint },
   };
+}
+
+async function fetchAndParse(url: string): Promise<{ events: ICalEvent[]; error?: string }> {
+  try {
+    const res = await fetch(url, { headers: { 'User-Agent': 'nag-agent/1.0', 'Accept': 'text/calendar' } });
+    if (!res.ok) return { events: [], error: `HTTP ${res.status}` };
+    const text = await res.text();
+    return { events: parseICal(text) };
+  } catch (e) {
+    return { events: [], error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+function calendarLabel(url: string): string {
+  // Google iCal URLs: https://calendar.google.com/calendar/ical/<email>/private-<token>/basic.ics
+  const m = url.match(/calendar\/ical\/([^/]+)\//);
+  if (m) return decodeURIComponent(m[1]);
+  try { return new URL(url).hostname; } catch { return 'unknown'; }
 }
 
 Deno.serve(async (req) => {
@@ -157,28 +177,44 @@ Deno.serve(async (req) => {
   if (pre) return pre;
   const t0 = Date.now();
   try {
-    const url = Deno.env.get('GOOGLE_CALENDAR_ICAL_URL');
-    if (!url) return json({ ok: false, error: 'GOOGLE_CALENDAR_ICAL_URL missing.' }, 500);
+    const rawUrls = Deno.env.get('GOOGLE_CALENDAR_ICAL_URL');
+    if (!rawUrls) return json({ ok: false, error: 'GOOGLE_CALENDAR_ICAL_URL missing.' }, 500);
+    const urls = rawUrls.split(',').map((u) => u.trim()).filter(Boolean);
+    if (urls.length === 0) return json({ ok: false, error: 'No URLs parsed from GOOGLE_CALENDAR_ICAL_URL.' }, 500);
+
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
-    const res = await fetch(url, { headers: { 'User-Agent': 'nag-agent/1.0', 'Accept': 'text/calendar' } });
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`iCal fetch ${res.status}: ${body.slice(0, 200)}`);
-    }
-    const text = await res.text();
-    const events = parseICal(text);
 
-    // If a UID has any instances (RECURRENCE-ID), drop the master (RRULE without RECURRENCE-ID).
+    // Fetch each calendar in parallel; tag events with their source URL.
+    const fetchResults = await Promise.all(urls.map(async (url) => {
+      const label = calendarLabel(url);
+      const { events, error } = await fetchAndParse(url);
+      events.forEach((ev) => { ev._source_url = label; });
+      return { url: label, count: events.length, events, error };
+    }));
+
+    const allEvents: ICalEvent[] = [];
+    for (const r of fetchResults) allEvents.push(...r.events);
+
+    // Dedup masters when instances exist (per UID).
     const uidsWithInstances = new Set<string>();
-    for (const ev of events) {
+    for (const ev of allEvents) {
       if (ev.uid && ev.recurrenceId) uidsWithInstances.add(ev.uid);
     }
-    const filtered = events.filter((ev) => {
+    let filtered = allEvents.filter((ev) => {
       if (!ev.uid) return false;
       if (ev.hasRRule && !ev.recurrenceId && uidsWithInstances.has(ev.uid)) return false;
+      return true;
+    });
+
+    // Cross-calendar dedup: same UID across calendars → keep first.
+    const seenUids = new Set<string>();
+    filtered = filtered.filter((ev) => {
+      const key = ev.recurrenceId ? `${ev.uid}::${ev.recurrenceId}` : ev.uid;
+      if (seenUids.has(key!)) return false;
+      seenUids.add(key!);
       return true;
     });
 
@@ -187,12 +223,13 @@ Deno.serve(async (req) => {
     const cutoffFuture = now + 90 * 24 * 60 * 60 * 1000;
     const rows: Record<string, unknown>[] = [];
     for (const ev of filtered) {
-      const row = eventToRow(ev);
+      const row = eventToRow(ev, ev._source_url);
       if (!row) continue;
       const startMs = new Date(row.occurred_at as string).getTime();
       if (startMs < cutoffPast || startMs > cutoffFuture) continue;
       rows.push(row);
     }
+
     let ingested = 0;
     if (rows.length > 0) {
       for (let i = 0; i < rows.length; i += 200) {
@@ -207,10 +244,12 @@ Deno.serve(async (req) => {
       { service: 'gcal', sync_cursor: String(now), last_sync_at: new Date().toISOString(), active: true },
       { onConflict: 'service' },
     );
+
     return json({
       ok: true, function: 'ingest-gcal',
-      total_in_feed: events.length,
-      after_master_dedup: filtered.length,
+      calendars: fetchResults.map((r) => ({ url: r.url, fetched: r.count, error: r.error })),
+      total_in_feed: allEvents.length,
+      after_dedup: filtered.length,
       ingested,
       window: '30d past → 90d future',
       took_ms: Date.now() - t0,
