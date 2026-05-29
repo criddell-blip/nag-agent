@@ -20,10 +20,37 @@ export const db = isConfigured
 export async function listOpenAlerts() {
   const { data, error } = await db
     .from('alerts')
-    .select('id, severity, title, body, status, created_at, last_notified_at, context_links')
+    .select('id, severity, title, body, status, created_at, last_notified_at, context_links, rules(name)')
     .eq('status', 'open')
+    .order('severity', { ascending: true })  // critical < info alphabetically; we re-sort in JS
     .order('created_at', { ascending: false })
+    .limit(200);
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function listUpcomingMeetings(daysAhead = 14) {
+  const now = new Date().toISOString();
+  const future = new Date(Date.now() + daysAhead * 86400000).toISOString();
+  const { data, error } = await db
+    .from('events')
+    .select('id, subject, sender, due_at, body_excerpt, raw_metadata')
+    .eq('source', 'gcal')
+    .gte('due_at', now)
+    .lte('due_at', future)
+    .order('due_at', { ascending: true })
     .limit(100);
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function listActiveTasks() {
+  const { data, error } = await db
+    .from('events')
+    .select('id, subject, sender, due_at, status, external_url, raw_metadata')
+    .eq('source', 'clickup')
+    .order('due_at', { ascending: true, nullsFirst: false })
+    .limit(300);
   if (error) throw error;
   return data ?? [];
 }
