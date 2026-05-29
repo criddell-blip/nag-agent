@@ -212,16 +212,15 @@ function ActiveWorkPane({ tasks }) {
             <div className="list-body">
               {items.slice(0, 15).map((t) => {
                 const overdue = t.due_at && new Date(t.due_at) < new Date();
-                const appUrl = t.external_id ? `clickup://t/${t.external_id}` : null;
                 return (
                   <div key={t.id} className="task-row">
                     <div className="task-subject">
-                      <span>{t.subject || '(no name)'}</span>
-                      {(appUrl || t.external_url) && (
-                        <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--ink-faint)' }}>
-                          {appUrl && <a href={appUrl} style={{ marginRight: 6 }}>app</a>}
-                          {t.external_url && <a href={t.external_url} target="_blank" rel="noreferrer">web</a>}
-                        </span>
+                      {t.external_url ? (
+                        <a href={t.external_url} target="_blank" rel="noreferrer">
+                          {t.subject || '(no name)'}
+                        </a>
+                      ) : (
+                        <span>{t.subject || '(no name)'}</span>
                       )}
                     </div>
                     <div className="task-meta">

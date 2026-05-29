@@ -116,18 +116,12 @@ function renderTitle(template: string, event: EventRow): string {
     .replace(/\{sender\}/g, event.sender ?? '(unknown)');
 }
 
-// Build context links for an alert. For ClickUp events, include both
-// the desktop app deep-link (clickup://) and the web URL so the user
-// can pick whichever opens fastest.
+// Build context links for an alert. Just the web URL — ClickUp's
+// desktop app intercepts https://app.clickup.com/ URLs automatically
+// when installed, so we don't need a separate custom-scheme link.
 function buildContextLinks(e: EventRow): Array<{ label: string; url: string }> | null {
-  const links: Array<{ label: string; url: string }> = [];
-  if (e.source === 'clickup' && e.external_id) {
-    links.push({ label: 'App', url: `clickup://t/${e.external_id}` });
-  }
-  if (e.external_url) {
-    links.push({ label: 'Web', url: e.external_url });
-  }
-  return links.length > 0 ? links : null;
+  if (e.external_url) return [{ label: 'Open', url: e.external_url }];
+  return null;
 }
 
 async function evaluate(supabase: SupabaseClient) {
