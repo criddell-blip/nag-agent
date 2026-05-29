@@ -269,18 +269,28 @@ function AlertsPane({ alerts }) {
           groups[sev].length > 0 && (
             <div key={sev} className="severity-group">
               <div className={`severity-label severity-${sev}`}>{sev.toUpperCase()} · {groups[sev].length}</div>
-              {groups[sev].slice(0, 25).map((a) => (
-                <div key={a.id} className="alert-row">
-                  <div className="alert-title">{a.title}</div>
-                  {a.body && <div className="alert-body">{a.body.slice(0, 200)}</div>}
-                  <div className="alert-meta">
-                    {minutesAgo(a.created_at)}m ago
-                    {Array.isArray(a.context_links) && a.context_links.map((cl, i) => (
-                      <a key={i} href={cl.url} target="_blank" rel="noreferrer">{cl.label}</a>
-                    ))}
+              {groups[sev].slice(0, 25).map((a) => {
+                const ev = Array.isArray(a.events) ? a.events[0] : a.events;
+                const list = ev?.raw_metadata?.list;
+                const folder = ev?.raw_metadata?.folder;
+                return (
+                  <div key={a.id} className="alert-row">
+                    <div className="alert-title">{a.title}</div>
+                    {a.body && <div className="alert-body">{a.body.slice(0, 200)}</div>}
+                    <div className="alert-meta">
+                      {list && (
+                        <span className="alert-list" title={folder ? `${folder} / ${list}` : list}>
+                          {list}
+                        </span>
+                      )}
+                      <span>{minutesAgo(a.created_at)}m ago</span>
+                      {Array.isArray(a.context_links) && a.context_links.map((cl, i) => (
+                        <a key={i} href={cl.url} target="_blank" rel="noreferrer">{cl.label}</a>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               {groups[sev].length > 25 && (
                 <div className="sub" style={{ fontSize: 11, padding: '4px 0' }}>
                   +{groups[sev].length - 25} more

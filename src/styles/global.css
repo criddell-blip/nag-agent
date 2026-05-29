@@ -399,6 +399,19 @@ details[open] > .list-summary::before { content: '▾'; }
   font-size: 10px;
   color: var(--ink-faint);
   margin-top: 5px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.alert-list {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--moss);
+  background: rgba(90, 115, 64, 0.08);
+  border: 1px solid rgba(90, 115, 64, 0.3);
+  border-radius: 2px;
+  padding: 1px 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 /* ─── secondary panel ────────────────────────────────────────── */

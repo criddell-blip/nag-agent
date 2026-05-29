@@ -20,7 +20,7 @@ export const db = isConfigured
 export async function listOpenAlerts() {
   const { data, error } = await db
     .from('alerts')
-    .select('id, severity, title, body, status, created_at, last_notified_at, context_links, rules(name)')
+    .select('id, severity, title, body, status, created_at, last_notified_at, context_links, rules(name), events(source, raw_metadata)')
     .eq('status', 'open')
     .order('severity', { ascending: true })  // critical < info alphabetically; we re-sort in JS
     .order('created_at', { ascending: false })
