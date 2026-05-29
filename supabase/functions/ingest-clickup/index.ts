@@ -1,10 +1,15 @@
-// ingest-clickup v5 — always full-fetch + per-team reconciliation.
+// ingest-clickup v6 — full-fetch + per-team reconciliation + folder allowlist.
+//
+// Filtering: if CLICKUP_INCLUDE_FOLDERS is set (comma-separated folder
+// names), only tasks in those folders flow into events. Everything else
+// gets filtered out at ingest, and the reconciliation pass auto-closes
+// their previously-ingested events + open alerts.
 //
 // Why no incremental sync: at our scale (~hundreds-low-thousands of tasks)
 // full-fetch is cheap (~30s) and gives us the data we need to detect
 // deletions. Tasks that disappear from ClickUp (deleted, closed, moved
-// out of scope, permission revoked) get marked inactive here and their
-// open alerts get auto-closed.
+// out of scope, permission revoked, filtered out) get marked inactive
+// here and their open alerts get auto-closed.
 //
 // Per-team scoped: if a team's fetch errors out, we skip that team's
 // reconciliation entirely — we don't want a transient API failure to
@@ -82,6 +87,14 @@ function isActive(t: ClickUpTask): boolean {
   return type !== 'closed' && type !== 'done';
 }
 
+function buildFolderFilter(): (folderName: string | undefined) => boolean {
+  const raw = Deno.env.get('CLICKUP_INCLUDE_FOLDERS');
+  if (!raw) return () => true;  // no filter set → include all
+  const allowed = new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
+  if (allowed.size === 0) return () => true;
+  return (folderName) => folderName != null && allowed.has(folderName);
+}
+
 function taskToEvent(task: ClickUpTask): Record<string, unknown> {
   return {
     source: 'clickup',
@@ -120,6 +133,9 @@ Deno.serve(async (req) => {
     const teams = (teamsRaw?.teams ?? []) as Array<{ id: string; name: string; members?: any[] }>;
     if (teams.length === 0) throw new Error('No ClickUp teams accessible.');
 
+    const folderFilter = buildFolderFilter();
+    const folderFilterActive = Deno.env.get('CLICKUP_INCLUDE_FOLDERS') ? true : false;
+
     const perTeam: any[] = [];
     const allTasks: ClickUpTask[] = [];
     const successfulTeamIds: string[] = [];
@@ -132,10 +148,14 @@ Deno.serve(async (req) => {
       try {
         const raw = await fetchAllActiveTasks(token, team.id);
         const active = raw.filter(isActive);
-        active.forEach((t) => { t.team_id = team.id; });
-        allTasks.push(...active);
+        const filtered = active.filter((t) => folderFilter(t.folder?.name));
+        filtered.forEach((t) => { t.team_id = team.id; });
+        allTasks.push(...filtered);
         successfulTeamIds.push(team.id);
-        perTeam.push({ team_id: team.id, name: team.name, fetched: raw.length, kept_active: active.length });
+        perTeam.push({
+          team_id: team.id, name: team.name,
+          fetched: raw.length, kept_active: active.length, kept_after_folder_filter: filtered.length,
+        });
       } catch (e) {
         perTeam.push({ team_id: team.id, name: team.name, error: e instanceof Error ? e.message : String(e), reconciliation_skipped: true });
       }
@@ -201,6 +221,7 @@ Deno.serve(async (req) => {
     return json({
       ok: true, function: 'ingest-clickup',
       ingested,
+      folder_filter_active: folderFilterActive,
       per_team: perTeam,
       reconciled: {
         events_marked_inactive: eventsClosed,
