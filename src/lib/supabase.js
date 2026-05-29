@@ -47,7 +47,7 @@ export async function listUpcomingMeetings(daysAhead = 14) {
 export async function listActiveTasks() {
   const { data, error } = await db
     .from('events')
-    .select('id, subject, sender, due_at, status, external_url, raw_metadata')
+    .select('id, external_id, subject, sender, due_at, status, external_url, raw_metadata')
     .eq('source', 'clickup')
     .order('due_at', { ascending: true, nullsFirst: false })
     .limit(300);
