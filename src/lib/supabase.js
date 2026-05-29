@@ -30,14 +30,16 @@ export async function listOpenAlerts() {
 }
 
 export async function listUpcomingMeetings(daysAhead = 14) {
-  const now = new Date().toISOString();
-  const future = new Date(Date.now() + daysAhead * 86400000).toISOString();
+  // Start from local midnight today (so events earlier today still show).
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const future = new Date(startOfToday.getTime() + (daysAhead + 1) * 86400000);
   const { data, error } = await db
     .from('events')
     .select('id, subject, sender, due_at, body_excerpt, raw_metadata')
     .eq('source', 'gcal')
-    .gte('due_at', now)
-    .lte('due_at', future)
+    .gte('due_at', startOfToday.toISOString())
+    .lte('due_at', future.toISOString())
     .order('due_at', { ascending: true })
     .limit(100);
   if (error) throw error;
