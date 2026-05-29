@@ -120,8 +120,13 @@ function renderTitle(template: string, event: EventRow): string {
 // desktop app intercepts https://app.clickup.com/ URLs automatically
 // when installed, so we don't need a separate custom-scheme link.
 function buildContextLinks(e: EventRow): Array<{ label: string; url: string }> | null {
-  if (e.external_url) return [{ label: 'Open', url: e.external_url }];
-  return null;
+  const links: Array<{ label: string; url: string }> = [];
+  // Experimental ClickUp desktop app deep-link (format from mobile docs).
+  if (e.source === 'clickup' && e.external_id) {
+    links.push({ label: 'App', url: `clickup://open?taskId=${e.external_id}` });
+  }
+  if (e.external_url) links.push({ label: 'Web', url: e.external_url });
+  return links.length > 0 ? links : null;
 }
 
 async function evaluate(supabase: SupabaseClient) {
