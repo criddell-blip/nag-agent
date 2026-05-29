@@ -114,7 +114,6 @@ export async function setAppSetting(key, value) {
 }
 
 export async function listDiscoveredFolders() {
-  // Distinct folder names across all clickup events (active + inactive)
   const { data, error } = await db
     .from('events')
     .select('raw_metadata')
@@ -130,6 +129,33 @@ export async function listDiscoveredFolders() {
   return [...counts.entries()]
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count);
+}
+
+// Returns: [{ folder, totalTasks, lists: [{ name, count }] }]
+// Includes ALL clickup events (active+inactive) so historical lists still show.
+export async function listFoldersWithLists() {
+  const { data, error } = await db
+    .from('events')
+    .select('raw_metadata')
+    .eq('source', 'clickup')
+    .not('raw_metadata->>folder', 'is', null);
+  if (error) throw error;
+  const folderMap = new Map();  // folder → Map<list, count>
+  for (const e of data ?? []) {
+    const f = e.raw_metadata?.folder;
+    const l = e.raw_metadata?.list ?? '(no list)';
+    if (!f) continue;
+    if (!folderMap.has(f)) folderMap.set(f, new Map());
+    const lm = folderMap.get(f);
+    lm.set(l, (lm.get(l) ?? 0) + 1);
+  }
+  return [...folderMap.entries()]
+    .map(([folder, lm]) => ({
+      folder,
+      totalTasks: [...lm.values()].reduce((s, n) => s + n, 0),
+      lists: [...lm.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
+    }))
+    .sort((a, b) => b.totalTasks - a.totalTasks);
 }
 
 export async function triggerIngest(functionName) {

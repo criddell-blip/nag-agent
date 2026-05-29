@@ -474,28 +474,64 @@ details[open] > .list-summary::before { content: '▾'; }
 }
 
 /* ─── settings page specifics ────────────────────────────────── */
-.folder-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 8px;
+.folder-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   margin-bottom: 16px;
 }
-.folder-tile {
+.folder-block {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  transition: border-color 0.15s, background 0.15s;
+}
+.folder-block.on { border-color: var(--moss); background: rgba(90, 115, 64, 0.03); }
+.folder-block.off:hover { border-color: var(--ink-faint); }
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+.folder-row input { margin: 0; cursor: pointer; }
+.folder-name { flex: 1; font-family: 'Fraunces', serif; }
+.folder-count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-faint);
+  background: var(--bg-alt);
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.list-children {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0 14px 10px 36px;
+  border-top: 1px dashed var(--line-soft);
+}
+.list-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  background: var(--paper);
+  padding: 5px 0;
   cursor: pointer;
-  font-size: 13px;
-  transition: all 0.15s;
+  font-size: 12px;
+  border-top: 1px dashed var(--line-soft);
 }
-.folder-tile:hover { border-color: var(--ink-faint); }
-.folder-tile.on { border-color: var(--moss); background: rgba(90, 115, 64, 0.04); }
-.folder-tile input { margin: 0; cursor: pointer; }
-.folder-name { flex: 1; }
-.folder-count {
+.list-row:first-child { border-top: 0; }
+.list-row input { margin: 0; cursor: pointer; }
+.list-name { flex: 1; }
+.list-row.off .list-name {
+  text-decoration: line-through;
+  color: var(--ink-faint);
+}
+.list-count {
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
   color: var(--ink-faint);

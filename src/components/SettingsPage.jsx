@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   getAppSetting,
   setAppSetting,
-  listDiscoveredFolders,
+  listFoldersWithLists,
   triggerIngest,
 } from '../lib/supabase.js';
 
@@ -30,10 +30,11 @@ export default function SettingsPage({ onBack }) {
   );
 }
 
-// ─── ClickUp folder allowlist ─────────────────────────────────────
+// ─── ClickUp folder allowlist + list exclusions ──────────────────
 function ClickUpFoldersSection() {
-  const [discovered, setDiscovered] = useState([]);
-  const [allowed, setAllowed] = useState([]);
+  const [folders, setFolders] = useState([]);            // [{folder, totalTasks, lists: [...]}]
+  const [allowed, setAllowed] = useState(new Set());     // folder names
+  const [excluded, setExcluded] = useState(new Set());   // list names
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
@@ -42,17 +43,31 @@ function ClickUpFoldersSection() {
   useEffect(() => {
     (async () => {
       try {
-        const folders = await listDiscoveredFolders();
-        setDiscovered(folders);
-        const setting = await getAppSetting('clickup.include_folders');
-        const list = Array.isArray(setting?.value) ? setting.value : [];
-        setAllowed(list);
+        const fl = await listFoldersWithLists();
+        setFolders(fl);
+        const foldersSetting = await getAppSetting('clickup.include_folders');
+        setAllowed(new Set(Array.isArray(foldersSetting?.value) ? foldersSetting.value : []));
+        const listsSetting = await getAppSetting('clickup.exclude_lists');
+        setExcluded(new Set(Array.isArray(listsSetting?.value) ? listsSetting.value : []));
       } catch (e) { setMsg({ kind: 'err', text: e.message }); }
     })();
   }, []);
 
-  function toggle(name) {
-    setAllowed((prev) => prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]);
+  function toggleFolder(name) {
+    setAllowed((prev) => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+    setDirty(true);
+    setMsg(null);
+  }
+  function toggleList(name) {
+    setExcluded((prev) => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
     setDirty(true);
     setMsg(null);
   }
@@ -61,9 +76,13 @@ function ClickUpFoldersSection() {
     setSaving(true);
     setMsg(null);
     try {
-      await setAppSetting('clickup.include_folders', allowed);
+      await setAppSetting('clickup.include_folders', [...allowed]);
+      await setAppSetting('clickup.exclude_lists', [...excluded]);
       setDirty(false);
-      setMsg({ kind: 'ok', text: `Saved ${allowed.length} folders. Active on next ingest tick.` });
+      const folderTaskCount = folders
+        .filter((f) => allowed.has(f.folder))
+        .reduce((s, f) => s + f.lists.filter((l) => !excluded.has(l.name)).reduce((ss, l) => ss + l.count, 0), 0);
+      setMsg({ kind: 'ok', text: `Saved ${allowed.size} folders, ${excluded.size} list exclusions (~${folderTaskCount} tasks in scope). Active on next ingest.` });
     } catch (e) { setMsg({ kind: 'err', text: e.message }); }
     setSaving(false);
   }
@@ -85,22 +104,44 @@ function ClickUpFoldersSection() {
     <section className="section">
       <div className="section-head">
         <span className="section-num">§ 01</span>
-        <h2 className="section-title">ClickUp folder allowlist</h2>
-        <span className="section-sub">{allowed.length} selected / {discovered.length} total</span>
+        <h2 className="section-title">ClickUp scope</h2>
+        <span className="section-sub">{allowed.size} folders · {excluded.size} excluded lists</span>
       </div>
-      <p className="sub" style={{ marginBottom: 12, fontSize: 13 }}>
-        Tasks only flow into the pipeline if they're in one of these folders. Unchecking removes future tasks
-        in that folder; the reconciler auto-closes their existing alerts on the next ingest.
+      <p className="sub" style={{ marginBottom: 14, fontSize: 13 }}>
+        Check a folder to include all its lists. Within an included folder, uncheck individual lists to
+        exclude them. Changes take effect on the next ingest tick (or hit "Trigger now").
       </p>
 
-      <div className="folder-grid">
-        {discovered.map((f) => (
-          <label key={f.name} className={`folder-tile ${allowed.includes(f.name) ? 'on' : 'off'}`}>
-            <input type="checkbox" checked={allowed.includes(f.name)} onChange={() => toggle(f.name)} />
-            <span className="folder-name">{f.name}</span>
-            <span className="folder-count">{f.count}</span>
-          </label>
-        ))}
+      <div className="folder-tree">
+        {folders.map((f) => {
+          const folderAllowed = allowed.has(f.folder);
+          const listsInScope = folderAllowed
+            ? f.lists.filter((l) => !excluded.has(l.name)).reduce((s, l) => s + l.count, 0)
+            : 0;
+          return (
+            <div key={f.folder} className={`folder-block ${folderAllowed ? 'on' : 'off'}`}>
+              <label className="folder-row">
+                <input type="checkbox" checked={folderAllowed} onChange={() => toggleFolder(f.folder)} />
+                <span className="folder-name">{f.folder}</span>
+                <span className="folder-count">{folderAllowed ? `${listsInScope} / ${f.totalTasks}` : f.totalTasks}</span>
+              </label>
+              {folderAllowed && (
+                <div className="list-children">
+                  {f.lists.map((l) => {
+                    const included = !excluded.has(l.name);
+                    return (
+                      <label key={l.name} className={`list-row ${included ? 'on' : 'off'}`}>
+                        <input type="checkbox" checked={included} onChange={() => toggleList(l.name)} />
+                        <span className="list-name">{l.name}</span>
+                        <span className="list-count">{l.count}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       <div className="action-row">
