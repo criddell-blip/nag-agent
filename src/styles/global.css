@@ -414,6 +414,45 @@ details[open] > .list-summary::before { content: '▾'; }
   letter-spacing: 0.03em;
 }
 
+.alert-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+.alert-btn {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  padding: 3px 8px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  cursor: pointer;
+  color: var(--ink-soft);
+  transition: all 0.12s;
+  min-width: 32px;
+}
+.alert-btn:hover:not(:disabled) {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+.alert-btn:disabled { opacity: 0.4; cursor: wait; }
+.alert-btn-dismiss:hover:not(:disabled) { border-color: var(--rust); color: var(--rust); }
+.alert-btn-done {
+  border-color: var(--moss);
+  color: var(--moss);
+}
+.alert-btn-done:hover:not(:disabled) {
+  background: var(--moss);
+  color: var(--paper);
+}
+
+.alert-acting { opacity: 0.5; }
+.alert-err {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--rust);
+}
+
 /* ─── secondary panel ────────────────────────────────────────── */
 .secondary {
   margin-top: 18px;

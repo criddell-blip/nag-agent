@@ -169,3 +169,27 @@ export async function triggerIngest(functionName) {
   if (error) throw error;
   return data;
 }
+
+// ─── alert actions (mirror Slack interactions) ────────────────────
+// Action keys: snooze_1h | snooze_2h | snooze_1d | dismiss | done
+export async function applyAlertAction(alertId, action) {
+  const now = new Date();
+  const HR = 3600 * 1000;
+  const map = {
+    snooze_1h:  { status: 'snoozed',    until: new Date(now.getTime() + HR).toISOString(),       closed: null,                    dispo: 'snoozed',     hours: 1 },
+    snooze_2h:  { status: 'snoozed',    until: new Date(now.getTime() + 2 * HR).toISOString(),   closed: null,                    dispo: 'snoozed',     hours: 2 },
+    snooze_1d:  { status: 'snoozed',    until: new Date(now.getTime() + 24 * HR).toISOString(),  closed: null,                    dispo: 'snoozed',     hours: 24 },
+    dismiss:    { status: 'dismissed',  until: null,                                              closed: now.toISOString(),       dispo: 'dismissed',   hours: null },
+    done:       { status: 'done',       until: null,                                              closed: now.toISOString(),       dispo: 'marked_done', hours: null },
+  };
+  const u = map[action];
+  if (!u) throw new Error(`Unknown action: ${action}`);
+  const { error: e1 } = await db.from('alerts').update({
+    status: u.status, snooze_until: u.until, closed_at: u.closed,
+  }).eq('id', alertId);
+  if (e1) throw e1;
+  const { error: e2 } = await db.from('alert_dispositions').insert({
+    alert_id: alertId, action: u.dispo, snooze_duration_hours: u.hours,
+  });
+  if (e2) throw e2;
+}

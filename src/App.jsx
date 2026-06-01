@@ -8,6 +8,7 @@ import {
   countPeopleByPriority,
   listUpcomingMeetings,
   listActiveTasks,
+  applyAlertAction,
 } from './lib/supabase.js';
 import LoginScreen from './components/LoginScreen.jsx';
 import SettingsPage from './components/SettingsPage.jsx';
@@ -269,28 +270,9 @@ function AlertsPane({ alerts }) {
           groups[sev].length > 0 && (
             <div key={sev} className="severity-group">
               <div className={`severity-label severity-${sev}`}>{sev.toUpperCase()} · {groups[sev].length}</div>
-              {groups[sev].slice(0, 25).map((a) => {
-                const ev = Array.isArray(a.events) ? a.events[0] : a.events;
-                const list = ev?.raw_metadata?.list;
-                const folder = ev?.raw_metadata?.folder;
-                return (
-                  <div key={a.id} className="alert-row">
-                    <div className="alert-title">{a.title}</div>
-                    {a.body && <div className="alert-body">{a.body.slice(0, 200)}</div>}
-                    <div className="alert-meta">
-                      {list && (
-                        <span className="alert-list" title={folder ? `${folder} / ${list}` : list}>
-                          {list}
-                        </span>
-                      )}
-                      <span>{minutesAgo(a.created_at)}m ago</span>
-                      {Array.isArray(a.context_links) && a.context_links.map((cl, i) => (
-                        <a key={i} href={cl.url} target="_blank" rel="noreferrer">{cl.label}</a>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
+              {groups[sev].slice(0, 25).map((a) => (
+                <AlertRow key={a.id} alert={a} />
+              ))}
               {groups[sev].length > 25 && (
                 <div className="sub" style={{ fontSize: 11, padding: '4px 0' }}>
                   +{groups[sev].length - 25} more
@@ -358,6 +340,57 @@ function PStat({ label, n, color }) {
     <span style={{ fontSize: 13 }}>
       <strong style={{ color: color ?? 'inherit' }}>{n}</strong> <span className="sub">{label}</span>
     </span>
+  );
+}
+
+// ─── Alert row with snooze/dismiss/done actions ──────────────────
+function AlertRow({ alert: a }) {
+  const ev = Array.isArray(a.events) ? a.events[0] : a.events;
+  const list = ev?.raw_metadata?.list;
+  const folder = ev?.raw_metadata?.folder;
+  const [acting, setActing] = useState(null);  // 'snooze_1h' | etc
+  const [err, setErr] = useState(null);
+  const [dismissed, setDismissed] = useState(false);  // optimistic hide
+
+  async function act(action) {
+    setActing(action);
+    setErr(null);
+    try {
+      await applyAlertAction(a.id, action);
+      // Optimistic: remove from view immediately; realtime confirms.
+      setDismissed(true);
+    } catch (e) {
+      setErr(e.message);
+      setActing(null);
+    }
+  }
+
+  if (dismissed) return null;
+
+  return (
+    <div className={`alert-row ${acting ? 'alert-acting' : ''}`}>
+      <div className="alert-title">{a.title}</div>
+      {a.body && <div className="alert-body">{a.body.slice(0, 200)}</div>}
+      <div className="alert-meta">
+        {list && (
+          <span className="alert-list" title={folder ? `${folder} / ${list}` : list}>
+            {list}
+          </span>
+        )}
+        <span>{minutesAgo(a.created_at)}m ago</span>
+        {Array.isArray(a.context_links) && a.context_links.map((cl, i) => (
+          <a key={i} href={cl.url} target="_blank" rel="noreferrer">{cl.label}</a>
+        ))}
+      </div>
+      <div className="alert-actions">
+        <button onClick={() => act('snooze_1h')} disabled={!!acting} className="alert-btn" title="Snooze 1 hour">+1h</button>
+        <button onClick={() => act('snooze_2h')} disabled={!!acting} className="alert-btn" title="Snooze 2 hours">+2h</button>
+        <button onClick={() => act('snooze_1d')} disabled={!!acting} className="alert-btn" title="Snooze 1 day">+1d</button>
+        <button onClick={() => act('dismiss')} disabled={!!acting} className="alert-btn alert-btn-dismiss" title="Dismiss (not relevant)">✕</button>
+        <button onClick={() => act('done')} disabled={!!acting} className="alert-btn alert-btn-done" title="Done">✓</button>
+      </div>
+      {err && <div className="alert-err">{err}</div>}
+    </div>
   );
 }
 
